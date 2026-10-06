@@ -1,5 +1,5 @@
 // sw.js — Service Worker : serveur local PWA offline-first
-const VERSION = 'hunter-v3';
+const VERSION = 'hunter-v4';
 const STATIC_CACHE = VERSION + '-static';
 const CDN_CACHE = VERSION + '-cdn';
 const RUNTIME_CACHE = VERSION + '-runtime';
