@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Clear Caches</title>
+  <style>
+    body { background: #0d1117; color: #c9d1d9; font-family: monospace;
+           padding: 20px; font-size: 14px; }
+    pre { background: #161b22; padding: 12px; border-radius: 6px; }
+    button { background: #da3633; color: white; border: none;
+             padding: 12px 20px; border-radius: 6px; font-size: 16px;
+             margin: 12px 0; }
+    .ok { color: #3fb950; } .err { color: #f85149; }
+  </style>
+</head>
+<body>
+  <h2>🧹 Clear Hunter Caches</h2>
+  <pre id="out">Prêt.</pre>
+  <button id="btn">🗑️ SUPPRIMER TOUS LES CACHES</button>
+
+  <script>
+    const out = document.getElementById('out');
+    document.getElementById('btn').onclick = async () => {
+      out.textContent = 'Suppression en cours...\n';
+      try {
+        const keys = await caches.keys();
+        for (const k of keys) {
+          if (k.startsWith('hunter-')) {
+            await caches.delete(k);
+            out.textContent += '✅ Supprimé: ' + k + '\n';
+          }
+        }
+        const regs = await navigator.serviceWorker.getRegistrations();
+        for (const r of regs) {
+          await r.unregister();
+          out.textContent += '✅ Unregistered: ' + r.scope + '\n';
+        }
+        out.textContent += '\n🎉 Terminé. Recharge la page principale.';
+      } catch (e) {
+        out.textContent += '❌ Erreur: ' + e.message;
+      }
+    };
+  </script>
+</body>
+</html>
