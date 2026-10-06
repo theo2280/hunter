@@ -48,3 +48,42 @@ export async function preloadWordlists(langs) {
 }
 
 export function cachedLanguages() { return [...cache.keys()]; }
+/**
+ * Préchargement avec retry automatique : 3 tentatives avec backoff.
+ * Retourne un objet { loaded, missing } indiquant ce qui a réussi.
+ */
+export async function preloadWordlistsWithRetry(langs, onProgress) {
+  const loaded = {};
+  const stillMissing = [...langs];
+
+  for (let attempt = 1; attempt <= 3 && stillMissing.length > 0; attempt++) {
+    if (onProgress) onProgress({ attempt, loaded: Object.keys(loaded).length, total: langs.length, missing: [...stillMissing] });
+
+    // Lancer tous les manquants en parallèle
+    const results = await Promise.allSettled(
+      stillMissing.map(l => getWordlist(l))
+    );
+
+    // Récupérer ceux qui ont réussi
+    const newMissing = [];
+    results.forEach((r, i) => {
+      if (r.status === 'fulfilled') {
+        loaded[stillMissing[i]] = r.value;
+      } else {
+        newMissing.push(stillMissing[i]);
+      }
+    });
+
+    stillMissing.length = 0;
+    stillMissing.push(...newMissing);
+
+    // Attendre un peu avant de retenter (sauf si tout est OK)
+    if (stillMissing.length > 0 && attempt < 3) {
+      await new Promise(r => setTimeout(r, 1500 * attempt));
+    }
+  }
+
+  if (onProgress) onProgress({ attempt: 'done', loaded: Object.keys(loaded).length, total: langs.length, missing: [...stillMissing] });
+
+  return { loaded, missing: stillMissing };
+}

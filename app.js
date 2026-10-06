@@ -1,11 +1,24 @@
 // app.js — Orchestrateur Hunter : serveur PWA + crypto + IndexedDB + simulation + testnet
-import { getWordlist, preloadWordlists, WORDLIST_META } from './bip39-fr.js';
+import { getWordlist, preloadWordlists, preloadWordlistsWithRetry, WORDLIST_META } from './bip39-fr.js';
 import { LocalServer } from './server.js';
 import {
   startSession, updateSession, endSession, getLastSession,
   saveMatch, setConfig, getConfig, saveFormState, loadFormState
 } from './storage.js';
 import { encryptExport, decryptExport, passwordStrength } from './crypto-export.js';
+async function requestPersistentStorage() {
+  if (!navigator.storage || !navigator.storage.persist) return false;
+  try {
+    const already = await navigator.storage.persisted();
+    if (already) { console.log('[Storage] Déjà persistant'); return true; }
+    const granted = await navigator.storage.persist();
+    console.log('[Storage] Persistance accordée :', granted);
+    return granted;
+  } catch (e) {
+    console.warn('[Storage] Échec persistance:', e);
+    return false;
+  }
+}
 
 const state = {
   workers: [],
@@ -74,16 +87,33 @@ function populateLanguageSelects() {
 
 async function initWordlists() {
   const langs = Object.keys(WORDLIST_META);
-  els.wordlistStatus.textContent = 'Préchargement de ' + langs.length + ' wordlists...';
+  els.wordlistStatus.textContent = '⏳ Préchargement de ' + langs.length + ' wordlists...';
+
   try {
-    const loaded = await preloadWordlists(langs);
-    const ok = Object.keys(loaded).length;
-    els.wordlistStatus.textContent = '✅ ' + ok + '/' + langs.length + ' wordlists chargées (' + (ok * 2048) + ' mots).';
+    const result = await preloadWordlistsWithRetry(langs, (progress) => {
+      if (progress.attempt === 'done') return;
+      els.wordlistStatus.textContent =
+        '⏳ Tentative ' + progress.attempt + '/3 — ' +
+        progress.loaded + '/' + progress.total + ' chargées...';
+    });
+
+    const ok = Object.keys(result.loaded).length;
+    const missing = result.missing;
+
+    if (missing.length === 0) {
+      els.wordlistStatus.textContent =
+        '✅ ' + ok + '/' + langs.length + ' wordlists chargées (' + (ok * 2048) + ' mots).';
+    } else {
+      const missingLabels = missing.map(l => WORDLIST_META[l].label).join(', ');
+      els.wordlistStatus.textContent =
+        '⚠️ ' + ok + '/' + langs.length + ' wordlists chargées. ' +
+        'Manquantes : ' + missingLabels + ' (à la demande).';
+      console.warn('[Wordlists] Non chargées après 3 tentatives :', missing);
+    }
   } catch (e) {
     els.wordlistStatus.textContent = '⚠️ Erreur : ' + e.message;
   }
 }
-
 els.modeTabs.forEach(tab => {
   tab.addEventListener('click', () => {
     els.modeTabs.forEach(t => t.classList.remove('active'));
@@ -389,8 +419,7 @@ els.purgeCacheBtn.addEventListener('click', async () => {
 
 async function tryResumeSession() {
   try {
-    const last = await getLastSession();
-    if (!last || last.status !== 'running') return;
+    // 1. Restaurer le formulaire TOUJOURS
     const form = await loadFormState();
     if (form) {
       if (form.mode) {
@@ -405,12 +434,29 @@ async function tryResumeSession() {
       if (form.paths) els.pathList.value = form.paths;
       if (form.targets) els.targetsInput.value = form.targets;
     }
-    els.statusText.textContent = 'Session précédente restaurée.';
-  } catch (e) {}
-}
 
-(async function boot() {
+    // 2. Reprendre une session interrompue si elle existe
+    const last = await getLastSession();
+    if (last && last.status === 'running') {
+      state.sessionId = last.id;
+      state.stats = Object.assign({}, last.stats, { startTime: Date.now() });
+      els.statusText.textContent = '⏪ Session restaurée (' +
+        last.stats.candidates.toLocaleString() + ' candidats).';
+    } else if (form) {
+      els.statusText.textContent = '✅ Formulaire restauré. Prêt à démarrer.';
+    }
+  } catch (e) {
+    console.warn('[Resume] Erreur:', e);
+  }
+}
   populateLanguageSelects();
+  await bootServer();
+  await initWordlists();
+  await tryResumeSession();
+  scheduleFormSave();
+})();(async function boot() {
+  populateLanguageSelects();
+  await requestPersistentStorage();
   await bootServer();
   await initWordlists();
   await tryResumeSession();
