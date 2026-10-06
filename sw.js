@@ -1,8 +1,7 @@
-// sw.js — Service Worker : serveur local PWA offline-first
-const VERSION = 'hunter-v5';
+// sw.js — Service Worker : minimal, non bloquant, activation garantie
+const VERSION = 'hunter-v7';
 const STATIC_CACHE = VERSION + '-static';
 const CDN_CACHE = VERSION + '-cdn';
-const RUNTIME_CACHE = VERSION + '-runtime';
 
 const PRECACHE_ASSETS = [
   './', './index.html', './manifest.webmanifest', './style.css',
@@ -11,155 +10,121 @@ const PRECACHE_ASSETS = [
   './icons/icon-192.png', './icons/icon-512.png', './icons/icon-maskable-512.png'
 ];
 
-const CDN_PRECACHE = [
-  'https://esm.sh/@scure/bip39@1.5.0',
-  'https://esm.sh/@scure/bip39@1.5.0/wordlists/english.js',
-  'https://esm.sh/@scure/bip32@1.6.0',
-  'https://esm.sh/@noble/hashes@1.7.0/sha256.js',
-  'https://esm.sh/@noble/hashes@1.7.0/ripemd160.js',
-  'https://esm.sh/@noble/hashes@1.7.0/argon2.js',
-  'https://esm.sh/@noble/hashes@1.7.0/utils.js',
-  'https://esm.sh/@scure/base@1.2.0'
-];
-
 const CDN_HOSTS = ['esm.sh', 'raw.githubusercontent.com', 'cdn.jsdelivr.net', 'unpkg.com'];
 
-const BIP39_BASE = 'https://raw.githubusercontent.com/bitcoin/bips/master/bip-0039';
-const BIP39_FILES = [
-  'english.txt', 'french.txt', 'spanish.txt', 'russian.txt',
-  'chinese_simplified.txt', 'german.txt', 'italian.txt', 'hindi.txt', 'portuguese.txt'
-];
-
+// INSTALL — durée ~1s, ne fait AUCUN fetch réseau bloquant
 self.addEventListener('install', (event) => {
   event.waitUntil((async () => {
-    // Phase 1 : précacher les assets locaux (indispensable, rapide)
-    const staticCache = await caches.open(STATIC_CACHE);
-    await staticCache.addAll(PRECACHE_ASSETS).catch(e => 
-      console.warn('[SW] precache local partiel', e));
-
-    // Activer immédiatement — le SW devient utilisable sans attendre le CDN
-    await self.skipWaiting();
-
-    // Phase 2 : précacher CDN + wordlists en arrière-plan (non bloquant)
-    (async () => {
-      const cdnCache = await caches.open(CDN_CACHE);
-      
-      // CDN libs — parallélisé
-      await Promise.allSettled(CDN_PRECACHE.map(async (url) => {
-        try {
-          const res = await fetch(url, { mode: 'cors' });
-          if (res.ok) await cdnCache.put(url, res.clone());
-        } catch {}
-      }));
-
-      // Wordlists — parallélisé
-      await Promise.allSettled(BIP39_FILES.map(async (file) => {
-        const url = BIP39_BASE + '/' + file;
-        try {
-          const res = await fetch(url);
-          if (res.ok) await cdnCache.put(url, res.clone());
-        } catch {}
-      }));
-
-      console.log('[SW] Précache CDN + wordlists terminé');
-    })().catch(e => console.warn('[SW] Précache arrière-plan', e));
+    try {
+      const cache = await caches.open(STATIC_CACHE);
+      // Précache local : chaque fetch est isolé, aucun ne peut bloquer
+      await Promise.all(
+        PRECACHE_ASSETS.map(asset =>
+          fetch(asset).then(res => {
+            if (res.ok) cache.put(asset, res);
+          }).catch(() => {})
+        )
+      );
+    } catch (e) {
+      console.warn('[SW] install cache error:', e);
+    }
+    // Toujours activer immédiatement, peu importe le résultat
+    self.skipWaiting();
   })());
 });
+
+// ACTIVATE — nettoyage + contrôle + précache arrière-plan
 self.addEventListener('activate', (event) => {
   event.waitUntil((async () => {
-    const keys = await caches.keys();
-    await Promise.all(keys.filter(k => !k.startsWith(VERSION)).map(k => caches.delete(k)));
+    try {
+      const keys = await caches.keys();
+      await Promise.all(
+        keys.filter(k => !k.startsWith(VERSION)).map(k => caches.delete(k))
+      );
+    } catch (e) {}
     await self.clients.claim();
+
+    // Notifier
     const clients = await self.clients.matchAll({ type: 'window' });
     clients.forEach(c => c.postMessage({ type: 'server-ready', version: VERSION }));
+
+    // Précache CDN en arrière-plan (silencieux)
+    precacheCDNInBackground();
   })());
 });
 
+async function precacheCDNInBackground() {
+  try {
+    const cdnCache = await caches.open(CDN_CACHE);
+    const base = 'https://raw.githubusercontent.com/bitcoin/bips/master/bip-0039';
+    const files = ['english.txt','french.txt','spanish.txt','russian.txt',
+                   'chinese_simplified.txt','german.txt','italian.txt','hindi.txt','portuguese.txt'];
+    for (const f of files) {
+      const url = base + '/' + f;
+      if (!(await cdnCache.match(url))) {
+        try {
+          const res = await fetch(url);
+          if (res.ok) await cdnCache.put(url, res);
+        } catch (e) {}
+      }
+    }
+  } catch (e) {}
+}
+
+// FETCH — cache-first pour CDN, network-first pour local
 self.addEventListener('fetch', (event) => {
   const { request } = event;
   if (request.method !== 'GET') return;
   const url = new URL(request.url);
 
+  // CDN : cache-first permanent
   if (CDN_HOSTS.some(h => url.hostname === h || url.hostname.endsWith('.' + h))) {
     event.respondWith(cacheFirst(request, CDN_CACHE));
     return;
   }
-  if (request.mode === 'navigate') {
-    event.respondWith(networkFirstNavigation(request));
-    return;
-  }
+
+  // Local : network-first avec fallback cache (garantit la mise à jour)
   if (url.origin === self.location.origin) {
-    event.respondWith(cacheFirst(request, STATIC_CACHE));
+    event.respondWith(networkFirst(request, STATIC_CACHE));
     return;
   }
-  event.respondWith(networkWithCacheFallback(request, RUNTIME_CACHE));
 });
 
-async function cacheFirst(request, cacheName) {
+async function cacheFirst(req, cacheName) {
   const cache = await caches.open(cacheName);
-  const cached = await cache.match(request);
-  if (cached) return cached;
+  const hit = await cache.match(req);
+  if (hit) return hit;
   try {
-    const response = await fetch(request);
-    if (response.ok || response.type === 'opaque') {
-      cache.put(request, response.clone()).catch(() => {});
-    }
-    return response;
-  } catch {
-    return new Response('Ressource indisponible hors ligne', { status: 503 });
+    const res = await fetch(req);
+    if (res.ok) cache.put(req, res.clone()).catch(() => {});
+    return res;
+  } catch (e) {
+    return new Response('offline', { status: 503 });
   }
 }
 
-async function networkFirstNavigation(request) {
-  const cache = await caches.open(STATIC_CACHE);
-  try {
-    const response = await fetch(request);
-    if (response.ok) cache.put(request, response.clone()).catch(() => {});
-    return response;
-  } catch {
-    const cached = await cache.match(request);
-    if (cached) return cached;
-    const fallback = await cache.match('./index.html');
-    if (fallback) return fallback;
-    return new Response('App hors ligne', { status: 503 });
-  }
-}
-
-async function networkWithCacheFallback(request, cacheName) {
+async function networkFirst(req, cacheName) {
   const cache = await caches.open(cacheName);
   try {
-    const response = await fetch(request);
-    if (response.ok) cache.put(request, response.clone()).catch(() => {});
-    return response;
-  } catch {
-    const cached = await cache.match(request);
-    if (cached) return cached;
-    throw new Error('Ressource inaccessible');
+    const res = await fetch(req);
+    if (res.ok) cache.put(req, res.clone()).catch(() => {});
+    return res;
+  } catch (e) {
+    const hit = await cache.match(req);
+    if (hit) return hit;
+    return new Response('offline', { status: 503 });
   }
 }
 
+// MESSAGES
 self.addEventListener('message', (event) => {
   const { type } = event.data || {};
-  if (type === 'SKIP_WAITING') { self.skipWaiting(); return; }
-  if (type === 'CACHE_STATUS') {
-    (async () => {
-      const keys = await caches.keys();
-      const stats = {};
-      for (const k of keys) {
-        const c = await caches.open(k);
-        const entries = await c.keys();
-        stats[k] = entries.length;
-      }
-      event.ports[0]?.postMessage({ version: VERSION, caches: stats, ready: true });
-    })();
-    return;
-  }
+  if (type === 'SKIP_WAITING') self.skipWaiting();
   if (type === 'PURGE_CACHE') {
     (async () => {
       const keys = await caches.keys();
-      const purged = keys.filter(k => k.startsWith(VERSION));
-      await Promise.all(purged.map(k => caches.delete(k)));
-      event.ports[0]?.postMessage({ purged: purged.length });
+      await Promise.all(keys.map(k => caches.delete(k)));
+      event.ports[0]?.postMessage({ purged: keys.length });
     })();
   }
 });

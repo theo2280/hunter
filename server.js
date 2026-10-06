@@ -1,4 +1,4 @@
-// server.js — Client du Service Worker : état du serveur local + install PWA
+// server.js — Client du Service Worker : NON BLOQUANT
 export class LocalServer {
   constructor() {
     this.registration = null;
@@ -28,19 +28,30 @@ export class LocalServer {
 
   async start() {
     if (!('serviceWorker' in navigator)) {
-      this._emit({ type: 'server-error', error: 'Service Worker non supporté' });
+      this._emit({ type: 'server-error', error: 'SW non supporté' });
       return false;
     }
     try {
-      this.registration = await navigator.serviceWorker.register('./sw.js', { scope: './' });
+      this.registration = await Promise.race([
+        navigator.serviceWorker.register('./sw.js', { scope: './' }),
+        new Promise((_, rej) => setTimeout(() => rej(new Error('register timeout')), 5000))
+      ]);
       navigator.serviceWorker.addEventListener('message', (e) => {
         this._emit({ type: 'sw-message', data: e.data });
       });
-      await this._waitForActivation();
+
+      // Attendre l'activation — 3s max
+      await Promise.race([
+        this._waitForActivation(),
+        new Promise(r => setTimeout(r, 3000))
+      ]);
+
       this.ready = true;
       this._emit({ type: 'server-ready', scope: this.registration.scope });
       return true;
     } catch (err) {
+      console.warn('[Server] SW échec:', err.message);
+      this.ready = true;
       this._emit({ type: 'server-error', error: err.message });
       return false;
     }
@@ -65,31 +76,13 @@ export class LocalServer {
     return outcome === 'accepted';
   }
 
-  async status() {
-    if (!navigator.serviceWorker.controller) return { ready: false };
-    return new Promise((resolve) => {
-      const ch = new MessageChannel();
-      ch.port1.onmessage = (e) => resolve(e.data);
-      navigator.serviceWorker.controller.postMessage({ type: 'CACHE_STATUS' }, [ch.port2]);
-      setTimeout(() => resolve({ ready: false, timeout: true }), 3000);
-    });
-  }
-
-  async precacheWordlists() {
-    if (!navigator.serviceWorker.controller) return;
-    return new Promise((resolve) => {
-      const ch = new MessageChannel();
-      ch.port1.onmessage = (e) => resolve(e.data);
-      navigator.serviceWorker.controller.postMessage({ type: 'PRECACHE_WORDLISTS' }, [ch.port2]);
-    });
-  }
-
   async purge() {
     if (!navigator.serviceWorker.controller) return { purged: 0 };
     return new Promise((resolve) => {
       const ch = new MessageChannel();
       ch.port1.onmessage = (e) => resolve(e.data);
       navigator.serviceWorker.controller.postMessage({ type: 'PURGE_CACHE' }, [ch.port2]);
+      setTimeout(() => resolve({ purged: 0 }), 2000);
     });
   }
 }

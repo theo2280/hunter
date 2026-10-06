@@ -455,10 +455,29 @@ async function tryResumeSession() {
   await tryResumeSession();
   scheduleFormSave();
 })();(async function boot() {
+  console.log('[Boot] Démarrage');
   populateLanguageSelects();
-  await requestPersistentStorage();
-  await bootServer();
-  await initWordlists();
-  await tryResumeSession();
+  els.serverStatus.textContent = '⏳ Initialisation...';
+  els.statusText.textContent = 'Prêt.';
+
+  // 1. Formulaire en premier (local, rapide)
+  tryResumeSession().catch(e => console.warn('[Boot] resume:', e));
   scheduleFormSave();
+
+  // 2. Wordlists avec timeout dur de 12s
+  const wordlistPromise = initWordlists();
+  Promise.race([
+    wordlistPromise,
+    new Promise(r => setTimeout(() => {
+      console.warn('[Boot] Wordlists timeout');
+      els.wordlistStatus.textContent = '⚠️ Wordlists indisponibles';
+      r();
+    }, 12000))
+  ]).catch(e => console.warn('[Boot] wl:', e));
+
+  // 3. Serveur SW — totalement non bloquant
+  bootServer().catch(e => console.warn('[Boot] server:', e));
+
+  // 4. Persistance en background
+  requestPersistentStorage().catch(() => {});
 })();
