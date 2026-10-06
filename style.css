@@ -152,8 +152,6 @@ footer { text-align: center; color: var(--text-dim); font-size: 11px; margin-top
   }
 }
 
-  .pwa-panel { display: none; }
-}
 @media (display-mode: standalone) {
   /* En mode PWA installée : masquer seulement le bandeau "Installer" */
   #installBtn { display: none !important; }
