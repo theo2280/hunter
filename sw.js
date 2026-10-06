@@ -1,5 +1,5 @@
 // sw.js — Service Worker : serveur local PWA offline-first
-const VERSION = 'hunter-v4';
+const VERSION = 'hunter-v5';
 const STATIC_CACHE = VERSION + '-static';
 const CDN_CACHE = VERSION + '-cdn';
 const RUNTIME_CACHE = VERSION + '-runtime';
@@ -32,26 +32,39 @@ const BIP39_FILES = [
 
 self.addEventListener('install', (event) => {
   event.waitUntil((async () => {
+    // Phase 1 : précacher les assets locaux (indispensable, rapide)
     const staticCache = await caches.open(STATIC_CACHE);
-    const cdnCache = await caches.open(CDN_CACHE);
-    await staticCache.addAll(PRECACHE_ASSETS).catch(e => console.warn('[SW] precache local', e));
-    for (const url of CDN_PRECACHE) {
-      try {
-        const res = await fetch(url, { mode: 'cors' });
-        if (res.ok) await cdnCache.put(url, res.clone());
-      } catch {}
-    }
-    await Promise.allSettled(BIP39_FILES.map(async (file) => {
-      const url = BIP39_BASE + '/' + file;
-      try {
-        const res = await fetch(url);
-        if (res.ok) await cdnCache.put(url, res.clone());
-      } catch {}
-    }));
+    await staticCache.addAll(PRECACHE_ASSETS).catch(e => 
+      console.warn('[SW] precache local partiel', e));
+
+    // Activer immédiatement — le SW devient utilisable sans attendre le CDN
     await self.skipWaiting();
+
+    // Phase 2 : précacher CDN + wordlists en arrière-plan (non bloquant)
+    (async () => {
+      const cdnCache = await caches.open(CDN_CACHE);
+      
+      // CDN libs — parallélisé
+      await Promise.allSettled(CDN_PRECACHE.map(async (url) => {
+        try {
+          const res = await fetch(url, { mode: 'cors' });
+          if (res.ok) await cdnCache.put(url, res.clone());
+        } catch {}
+      }));
+
+      // Wordlists — parallélisé
+      await Promise.allSettled(BIP39_FILES.map(async (file) => {
+        const url = BIP39_BASE + '/' + file;
+        try {
+          const res = await fetch(url);
+          if (res.ok) await cdnCache.put(url, res.clone());
+        } catch {}
+      }));
+
+      console.log('[SW] Précache CDN + wordlists terminé');
+    })().catch(e => console.warn('[SW] Précache arrière-plan', e));
   })());
 });
-
 self.addEventListener('activate', (event) => {
   event.waitUntil((async () => {
     const keys = await caches.keys();
