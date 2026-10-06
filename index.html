@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#0d1117">
+  <meta name="description" content="Récupération guidée de wallet Bitcoin BIP39/BIP32/BIP44, 100% offline.">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Hunter">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <title>Hunter — Récupération BIP39</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>🔍 Hunter</h1>
+      <p class="subtitle">Récupération guidée de wallet BIP39/BIP32/BIP44</p>
+      <p class="legal">⚠️ Usage strictement réservé aux wallets que vous possédez ou êtes autorisé à auditer.</p>
+    </header>
+
+    <div class="panel mode-panel">
+      <div class="mode-tabs">
+        <button class="mode-tab active" data-mode="guided">🎯 Mode Guidé (récupération)</button>
+        <button class="mode-tab" data-mode="random">🎲 Mode Aléatoire (audit)</button>
+      </div>
+    </div>
+
+    <div id="guidedPanel">
+      <div class="panel">
+        <h2>📝 Phrase mnémonique partielle</h2>
+        <p class="hint">
+          Mots connus + <code>?</code> pour les inconnus. Les <strong>préfixes</strong> sont acceptés
+          (ex: <code>aban</code> → tous les mots commençant par "aban").<br>
+          Exemple : <code>abandon ? ability ? able about above absent absorb abstract absurd abuse</code>
+        </p>
+        <textarea id="mnemonicPattern" rows="4"
+          placeholder="abandon ? ability ? able about above absent absorb abstract absurd abuse"></textarea>
+
+        <div class="grid-2">
+          <label>
+            <span>Longueur totale de la phrase</span>
+            <select id="phraseLength">
+              <option value="12">12 mots</option>
+              <option value="15">15 mots</option>
+              <option value="18">18 mots</option>
+              <option value="21">21 mots</option>
+              <option value="24" selected>24 mots</option>
+            </select>
+          </label>
+          <label>
+            <span>Langue de la wordlist</span>
+            <select id="wordlistLang"></select>
+          </label>
+        </div>
+        <p class="hint" id="wordlistStatus">Chargement des wordlists...</p>
+      </div>
+
+      <div class="panel">
+        <h2>🔐 Passphrase BIP39 candidate (optionnelle)</h2>
+        <p class="hint">Une passphrase par ligne. Vide = test sans passphrase.</p>
+        <textarea id="passphraseList" rows="3" placeholder="(vide)&#10;monMotDePasseSecret&#10;TREZOR"></textarea>
+
+        <h2 style="margin-top:16px;">🔢 Chemins de dérivation à tester</h2>
+        <p class="hint">
+          Un chemin par ligne. <code>i</code> = plage d'index (ex: <code>m/44'/0'/0'/0/i</code>).<br>
+          Types détectés : Legacy (1…), SegWit (3…), Bech32 (bc1…), et Testnet (m/n/2/tb1).
+        </p>
+        <textarea id="pathList" rows="4">m/44'/0'/0'/0/i
+m/44'/0'/0'/1/i
+m/49'/0'/0'/0/0
+m/84'/0'/0'/0/0</textarea>
+
+        <label>
+          <span>Plage d'index (i = 0 .. N)</span>
+          <input type="number" id="indexRange" value="10" min="1" max="1000">
+        </label>
+      </div>
+    </div>
+
+    <div id="randomPanel" style="display:none;">
+      <div class="panel">
+        <h2>🎲 Génération aléatoire</h2>
+        <div class="grid-2">
+          <label>
+            <span>Nombre de mots</span>
+            <select id="randomLength">
+              <option value="12">12 mots</option>
+              <option value="15">15 mots</option>
+              <option value="18">18 mots</option>
+              <option value="21">21 mots</option>
+              <option value="24" selected>24 mots</option>
+            </select>
+          </label>
+          <label>
+            <span>Langue</span>
+            <select id="randomLang"></select>
+          </label>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>📋 Stock d'adresses cibles</h2>
+      <p class="hint">Une adresse par ligne. Types : Legacy, SegWit, Bech32, Testnet.</p>
+      <textarea id="targetsInput" rows="4"
+        placeholder="1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa&#10;3J98t1WpEZ73CNmQviecrnyiWrnqRhWNLy&#10;bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4"></textarea>
+      <button id="loadTargetsBtn" class="btn-secondary">📥 Charger les adresses cibles</button>
+      <p class="hint" id="targetsStatus">Aucune adresse chargée.</p>
+    </div>
+
+    <div class="panel">
+      <h2>⚙️ Exécution</h2>
+      <div class="grid-2" style="margin-bottom:16px;">
+        <label>
+          <span>Workers</span>
+          <select id="workerCount">
+            <option value="1">1 (léger)</option>
+            <option value="2" selected>2 (équilibré)</option>
+            <option value="4">4 (performant)</option>
+            <option value="8">8 (max)</option>
+          </select>
+        </label>
+        <label>
+          <span>Limite de candidats (0 = illimité)</span>
+          <input type="number" id="candidateLimit" value="100000" min="0">
+        </label>
+      </div>
+
+      <div class="controls">
+        <button id="startBtn" class="btn-primary" disabled>▶️ Démarrer</button>
+        <button id="stopBtn" class="btn-danger" disabled>⏹️ Arrêter</button>
+        <button id="exportBtn" class="btn-secondary" disabled>💾 Exporter chiffré</button>
+      </div>
+
+      <div class="stats">
+        <div class="stat-card">
+          <span class="stat-value" id="statCandidates">0</span>
+          <span class="stat-label">Candidats testés</span>
+        </div>
+        <div class="stat-card">
+          <span class="stat-value" id="statAddresses">0</span>
+          <span class="stat-label">Adresses dérivées</span>
+        </div>
+        <div class="stat-card highlight">
+          <span class="stat-value" id="statMatches">0</span>
+          <span class="stat-label">Correspondances</span>
+        </div>
+        <div class="stat-card">
+          <span class="stat-value" id="statRate">0</span>
+          <span class="stat-label">Adresses/s</span>
+        </div>
+      </div>
+
+      <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+      <p class="status" id="statusText">Prêt. Configurez puis chargez des cibles.</p>
+    </div>
+
+    <div class="panel pwa-panel">
+      <h2>📲 Application</h2>
+      <div class="server-status">
+        <span id="serverStatus">⏳ Démarrage du serveur local...</span>
+        <span id="installBtn" class="btn-install" hidden>📲 Installer</span>
+      </div>
+      <p class="hint" id="pwaHint">
+        Pour installer : menu du navigateur → « Ajouter à l'écran d'accueil ».
+      </p>
+      <div class="controls">
+        <button id="simulateBtn" class="btn-secondary">🧪 Simulation</button>
+        <button id="importBtn" class="btn-secondary">📥 Importer</button>
+        <input type="file" id="importFile" accept=".json" hidden>
+        <button id="purgeCacheBtn" class="btn-secondary">🗑️ Purger cache</button>
+      </div>
+    </div>
+
+    <div class="panel results-panel" id="resultsPanel" style="display:none;">
+      <h2>🎯 Correspondances trouvées</h2>
+      <div id="resultsList"></div>
+    </div>
+
+    <footer>
+      <p>BIP-0039 · BIP-0032 · BIP-0044 — Usage strictement personnel.</p>
+    </footer>
+  </div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>

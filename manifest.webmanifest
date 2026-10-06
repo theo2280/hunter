@@ -1,0 +1,22 @@
+{
+  "name": "Hunter — Récupération BIP39",
+  "short_name": "Hunter",
+  "description": "Récupération guidée de wallet Bitcoin BIP39/BIP32/BIP44, 100% offline.",
+  "id": "/hunter/",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "display_override": ["standalone", "fullscreen", "minimal-ui"],
+  "orientation": "any",
+  "background_color": "#0d1117",
+  "theme_color": "#0d1117",
+  "lang": "fr",
+  "dir": "ltr",
+  "categories": ["utilities", "security", "productivity"],
+  "prefer_related_applications": false,
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
