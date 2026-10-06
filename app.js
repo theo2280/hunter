@@ -1,6 +1,9 @@
 // app.js — Hunter v8 : version simplifiée, non bloquante, robuste
 import { getWordlist, WORDLIST_META } from './bip39-fr.js';
 import { encryptExport, decryptExport, passwordStrength } from './crypto-export.js';
+import { BitMatrix } from './matrix.js';
+import { drawQR, QRScanner, decodeQRFromFile, detectQRPayloadType } from './qr.js';
+import { fetchBalanceWithFallback, fetchBalancesParallel, formatBTC, balanceState, clearBalanceCache } from './balance.js';
 
 // ============================================================
 //  ÉTAT
@@ -351,10 +354,21 @@ function initModeTabs() {
       tabs.forEach(t => t.classList.remove('active'));
       tab.classList.add('active');
       state.currentMode = tab.dataset.mode || 'guided';
+
       const guided = $('guidedPanel');
       const random = $('randomPanel');
+      const matrix = $('matrixPanel');
+
       if (guided) guided.style.display = state.currentMode === 'guided' ? 'block' : 'none';
       if (random) random.style.display = state.currentMode === 'random' ? 'block' : 'none';
+      if (matrix) matrix.style.display = state.currentMode === 'matrix' ? 'block' : 'none';
+
+      if (state.currentMode === 'matrix' && !window._matrixInitialized) {
+        window._matrixInitialized = true;
+        if (typeof initMatrixModule === 'function') {
+          initMatrixModule().catch(e => console.warn('[Matrix] init:', e));
+        }
+      }
     });
   });
 }
@@ -404,6 +418,314 @@ function bindEvents() {
 // ============================================================
 //  BOOT
 // ============================================================
+
+// ============================================================
+//  MODULE MATRICE (initMatrixModule)
+// ============================================================
+let _bitMatrix = null;
+let _qrScanner = null;
+let _matrixDeriving = false;
+
+async function initMatrixModule() {
+  console.log('[Matrix] Initialisation...');
+
+  // ============================================================
+  //  1. Instancier la matrice
+  // ============================================================
+  const container = $('bitMatrix');
+  if (!container) { console.warn('[Matrix] #bitMatrix introuvable'); return; }
+
+  _bitMatrix = new BitMatrix('bitMatrix', {
+    onChange: (evt) => {
+      updateMatrixDisplays(evt.bytes, evt.valid);
+    }
+  });
+
+  // État initial : clé vide
+  updateMatrixDisplays(new Uint8Array(32), false);
+
+  // ============================================================
+  //  2. Boutons de contrôle
+  // ============================================================
+  const safeBind = (id, fn) => { const el = $(id); if (el) el.addEventListener('click', fn); };
+
+  // Effacer
+  safeBind('matrixClr', () => {
+    _bitMatrix.clear();
+    setStatus('Matrice effacée.');
+  });
+
+  // Aléatoire sûr
+  safeBind('matrixRand', () => {
+    const buf = new Uint8Array(32);
+    crypto.getRandomValues(buf);
+    _bitMatrix.fromBytes(buf);
+    setStatus('Clé aléatoire cryptographiquement sûre générée.');
+  });
+
+  // Pulse
+  safeBind('matrixPulse', () => {
+    const btn = $('matrixPulse');
+    const warn = $('matrixWarning');
+    if (_bitMatrix.isPulsing()) {
+      _bitMatrix.stopPulse();
+      if (btn) btn.textContent = '💓 Pulse';
+      if (warn) warn.style.display = 'none';
+      setStatus('Pulse arrêté.');
+    } else {
+      _bitMatrix.startPulse(4);
+      if (btn) btn.textContent = '⏸️ Stop Pulse';
+      if (warn) warn.style.display = 'block';
+      setStatus('Pulse actif (⚠️ non sécurisé pour du vrai usage).');
+    }
+  });
+
+  // Rotations
+  safeBind('matrixLeft', () => _bitMatrix.rotateRowsLeft());
+  safeBind('matrixRight', () => _bitMatrix.rotateRowsRight());
+  safeBind('matrixUp', () => _bitMatrix.rotateColsUp());
+  safeBind('matrixDown', () => _bitMatrix.rotateColsDown());
+
+  // Clavier global (quand on est sur l'onglet matrice)
+  document.addEventListener('keydown', (e) => {
+    if (state.currentMode !== 'matrix') return;
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
+    const key = e.key.toLowerCase();
+    if (key === 'a' || key === 'arrowleft')  { _bitMatrix.rotateRowsLeft();  e.preventDefault(); }
+    if (key === 'd' || key === 'arrowright') { _bitMatrix.rotateRowsRight(); e.preventDefault(); }
+    if (key === 'w' || key === 'arrowup')    { _bitMatrix.rotateColsUp();    e.preventDefault(); }
+    if (key === 's' || key === 'arrowdown')  { _bitMatrix.rotateColsDown();  e.preventDefault(); }
+  });
+
+  // WIF masqué
+  const wifEl = $('matrixWif');
+  if (wifEl) {
+    wifEl.addEventListener('click', () => wifEl.classList.toggle('revealed'));
+  }
+  safeBind('matrixWifToggle', () => {
+    const w = $('matrixWif');
+    if (w) w.classList.toggle('revealed');
+  });
+
+  // ============================================================
+  //  3. QR Code
+  // ============================================================
+  const qrCanvas = $('qrCanvas');
+  const qrText = $('qrText');
+  const qrResult = $('qrResult');
+
+  safeBind('qrGenBtn', async () => {
+    const text = (qrText?.value || '').trim() || $('matrixWif')?.textContent || $('matrixAddrP2PKHc')?.textContent;
+    if (!text || text === '—') { setStatus('Rien à encoder en QR.'); return; }
+    if (qrResult) qrResult.textContent = 'Génération...';
+    const ok = await drawQR(qrCanvas, text, { size: 256, margin: 2, level: 'M' });
+    if (qrResult) qrResult.textContent = ok ? '✅ QR généré pour : ' + text.slice(0, 20) + '...' : '❌ Échec de génération';
+  });
+
+  safeBind('qrScanBtn', async () => {
+    if (!QRScanner.isSupported()) {
+      if (qrResult) qrResult.textContent = '⚠️ Scan caméra non supporté par ce navigateur.';
+      return;
+    }
+    const video = $('camPreview');
+    const stopBtn = $('qrStopBtn');
+    const scanBtn = $('qrScanBtn');
+    try {
+      if (video) video.style.display = 'block';
+      if (stopBtn) stopBtn.style.display = 'inline-block';
+      if (scanBtn) scanBtn.disabled = true;
+      if (qrResult) qrResult.textContent = '📷 Caméra active — visez un QR...';
+
+      _qrScanner = new QRScanner(video, (value) => {
+        handleScannedQR(value);
+      });
+      await _qrScanner.start();
+    } catch (e) {
+      if (qrResult) qrResult.textContent = '❌ Caméra indisponible : ' + e.message;
+    }
+  });
+
+  safeBind('qrStopBtn', () => {
+    if (_qrScanner) { _qrScanner.stop(); _qrScanner = null; }
+    const video = $('camPreview');
+    if (video) video.style.display = 'none';
+    const stopBtn = $('qrStopBtn');
+    if (stopBtn) stopBtn.style.display = 'none';
+    const scanBtn = $('qrScanBtn');
+    if (scanBtn) scanBtn.disabled = false;
+    if (qrResult) qrResult.textContent = 'Caméra arrêtée.';
+  });
+
+  safeBind('qrFileBtn', () => { const f = $('qrFile'); if (f) f.click(); });
+  const qrFile = $('qrFile');
+  if (qrFile) {
+    qrFile.addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      try {
+        const value = await decodeQRFromFile(file);
+        handleScannedQR(value);
+      } catch (err) {
+        if (qrResult) qrResult.textContent = '❌ ' + err.message;
+      }
+    });
+  }
+
+  // ============================================================
+  //  4. Balance check
+  // ============================================================
+  safeBind('btnCheckBalances', async () => {
+    const offline = $('offlineToggle')?.checked;
+    if (offline) { setStatus('🔒 Mode offline actif — désactivez-le pour vérifier les soldes.'); return; }
+
+    const api = $('apiSelect')?.value || 'mempool';
+    const addrs = [
+      { key: 'P2PKHc', addr: $('matrixAddrP2PKHc')?.textContent },
+      { key: 'P2PKHu', addr: $('matrixAddrP2PKHu')?.textContent },
+      { key: 'P2SH',   addr: $('matrixAddrP2SH')?.textContent },
+      { key: 'Bech32', addr: $('matrixAddrBech32')?.textContent }
+    ];
+
+    setStatus('💰 Vérification des soldes...');
+    clearBalanceCache();
+
+    const results = await fetchBalancesParallel(addrs.map(a => a.addr), {
+      primary: api,
+      fallback: api === 'mempool' ? 'blockchair' : 'mempool'
+    });
+
+    addrs.forEach((a, i) => {
+      const balEl = $('matrixBal' + a.key);
+      const rowEl = $('matrixRow' + a.key);
+      if (!balEl || !rowEl) return;
+      const r = results[i];
+      const st = balanceState(r);
+      rowEl.classList.remove('funded', 'error');
+      if (st === 'error') {
+        balEl.textContent = '—';
+        rowEl.classList.add('error');
+      } else {
+        balEl.textContent = formatBTC(r.balance);
+        if (st === 'funded') rowEl.classList.add('funded');
+      }
+    });
+    setStatus('✅ Soldes vérifiés.');
+  });
+
+  // ============================================================
+  //  5. Copie rapide (tap)
+  // ============================================================
+  ['matrixAddrP2PKHc', 'matrixAddrP2PKHu', 'matrixAddrP2SH', 'matrixAddrBech32', 'matrixWif'].forEach(id => {
+    const el = $(id);
+    if (!el) return;
+    el.addEventListener('click', () => {
+      const txt = el.textContent;
+      if (!txt || txt === '—') return;
+      navigator.clipboard.writeText(txt)
+        .then(() => setStatus('✅ Copié : ' + txt.slice(0, 20) + '...'))
+        .catch(() => setStatus('❌ Échec copie'));
+    });
+  });
+
+  console.log('[Matrix] ✅ Initialisation complète');
+}
+
+// ============================================================
+//  HANDLERS INTERNES DU MODULE MATRIX
+// ============================================================
+async function updateMatrixDisplays(privKeyBytes, valid) {
+  // 1. Indicateur de validité
+  const validIcon = $('matrixValidIcon');
+  if (validIcon) {
+    validIcon.textContent = valid ? '✅ Valide' : '❌ Invalide (0 ou ≥ ordre N)';
+    validIcon.style.color = valid ? 'var(--success)' : 'var(--danger)';
+  }
+
+  // 2. HEX
+  const hex = Array.from(privKeyBytes).map(b => b.toString(16).padStart(2, '0')).join('');
+  const hexEl = $('matrixHex');
+  if (hexEl) hexEl.textContent = hex || '—';
+
+  // 3. WIF + adresses : nécessite un worker
+  if (!valid) {
+    ['matrixWif', 'matrixAddrP2PKHc', 'matrixAddrP2PKHu', 'matrixAddrP2SH', 'matrixAddrBech32'].forEach(id => {
+      const el = $(id);
+      if (el) el.textContent = '—';
+    });
+    return;
+  }
+
+  // Éviter les dérivations concurrentes
+  if (_matrixDeriving) return;
+  _matrixDeriving = true;
+
+  try {
+    const result = await deriveAllAddressesFromMatrix(privKeyBytes);
+    const wifEl = $('matrixWif');
+    if (wifEl) wifEl.textContent = result.wif;
+
+    const setAddr = (id, addr) => { const el = $(id); if (el) el.textContent = addr; };
+    setAddr('matrixAddrP2PKHc', result.p2pkhC);
+    setAddr('matrixAddrP2PKHu', result.p2pkhU);
+    setAddr('matrixAddrP2SH', result.p2sh);
+    setAddr('matrixAddrBech32', result.bech32);
+  } catch (e) {
+    console.warn('[Matrix] derive error:', e);
+  } finally {
+    _matrixDeriving = false;
+  }
+}
+
+async function deriveAllAddressesFromMatrix(privKeyBytes) {
+  // Utilise un worker dédié pour ne pas bloquer l'UI
+  return new Promise((resolve, reject) => {
+    const worker = new Worker('worker.js', { type: 'module' });
+    const timeout = setTimeout(() => { worker.terminate(); reject(new Error('Timeout dérivation')); }, 10000);
+
+    worker.onmessage = (e) => {
+      const msg = e.data;
+      if (msg.type === 'matrixDerived') {
+        clearTimeout(timeout);
+        worker.terminate();
+        resolve(msg.payload);
+      } else if (msg.type === 'error') {
+        clearTimeout(timeout);
+        worker.terminate();
+        reject(new Error(msg.message));
+      }
+    };
+
+    worker.onerror = (err) => {
+      clearTimeout(timeout);
+      worker.terminate();
+      reject(err);
+    };
+
+    worker.postMessage({ type: 'deriveMatrixKey', privateKeyHex: Array.from(privKeyBytes).map(b => b.toString(16).padStart(2, '0')).join('') });
+  });
+}
+
+function handleScannedQR(value) {
+  const qrResult = $('qrResult');
+  const type = detectQRPayloadType(value);
+  if (qrResult) {
+    qrResult.textContent = `✅ QR détecté (${type}) : ${value.slice(0, 60)}${value.length > 60 ? '...' : ''}`;
+  }
+  // Auto-remplir le champ QR
+  const qrText = $('qrText');
+  if (qrText) qrText.value = value;
+
+  // Si c'est une adresse, la proposer comme cible
+  if (type === 'address-mainnet' || type === 'address-bech32') {
+    const targetsInput = $('targetsInput');
+    if (targetsInput && !targetsInput.value.includes(value)) {
+      targetsInput.value = (targetsInput.value + '\n' + value).trim();
+      setStatus('📍 Adresse ajoutée aux cibles.');
+    }
+  }
+}
+
+
 (function boot() {
   console.log('[Hunter] Boot');
 

@@ -16,7 +16,79 @@ const NETWORKS = {
   testnet: { p2pkh: 0x6f, p2sh: 0xc4, bech32: 'tb', coinType: 1 }
 };
 
+
+// ============================================================
+//  HANDLER MATRIX : dérive 4 adresses depuis une clé privée brute
+// ============================================================
+async function handleDeriveMatrixKey(privateKeyHex) {
+  try {
+    // Validation : 32 octets (64 caractères hex)
+    if (!privateKeyHex || privateKeyHex.length !== 64) {
+      self.postMessage({ type: 'error', message: 'Clé privée invalide (doit faire 32 octets)' });
+      return;
+    }
+
+    const privBytes = new Uint8Array(32);
+    for (let i = 0; i < 32; i++) {
+      privBytes[i] = parseInt(privateKeyHex.substr(i * 2, 2), 16);
+    }
+
+    // Vérifier que 0 < d < N (ordre courbe secp256k1)
+    const N = BigInt('0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141');
+    const d = BigInt('0x' + privateKeyHex);
+    if (d === 0n || d >= N) {
+      self.postMessage({ type: 'error', message: 'Clé privée hors plage valide' });
+      return;
+    }
+
+    // Import secp256k1 pour dériver le public key
+    const { secp256k1 } = await import('https://esm.sh/@noble/secp256k1@2.2.3');
+
+    // Calcul pubkey compressée et non-compressée
+    const pubComp = secp256k1.getPublicKey(privBytes, true);   // 33 octets
+    const pubUncomp = secp256k1.getPublicKey(privBytes, false); // 65 octets
+
+    // WIF compressé
+    const wif = await computeWIF(privBytes, true);
+
+    // 4 adresses
+    const p2pkhC = pubkeyToP2PKH(pubComp, NETWORKS.mainnet);
+    const p2pkhU = pubkeyToP2PKH(pubUncomp, NETWORKS.mainnet);
+    const p2sh = pubkeyToP2SH(pubComp, NETWORKS.mainnet);
+    const bech32 = pubkeyToP2WPKH(pubComp, NETWORKS.mainnet);
+
+    self.postMessage({
+      type: 'matrixDerived',
+      payload: { wif, p2pkhC, p2pkhU, p2sh, bech32 }
+    });
+  } catch (e) {
+    self.postMessage({ type: 'error', message: 'Derive matrix: ' + e.message });
+  }
+}
+
+async function computeWIF(privBytes, compressed) {
+  const payload = new Uint8Array(1 + 32 + (compressed ? 1 : 0));
+  payload[0] = 0x80; // mainnet WIF prefix
+  payload.set(privBytes, 1);
+  if (compressed) payload[33] = 0x01;
+  const checksum = sha256(sha256(payload)).slice(0, 4);
+  const full = new Uint8Array(payload.length + 4);
+  full.set(payload);
+  full.set(checksum, payload.length);
+  return base58Encode(full);
+}
+
+// ============================================================
+//  AJOUT DU HANDLER AU MESSAGE LISTENER EXISTANT
+// ============================================================
+
 self.onmessage = (e) => {
+  // Handler Matrix : dérivation depuis clé privée brute
+  if (msg.type === 'deriveMatrixKey') {
+    handleDeriveMatrixKey(msg.privateKeyHex);
+    return;
+  }
+
   const msg = e.data;
   if (msg.type === 'setTargets') { targets = new Set(msg.targets); return; }
   if (msg.type === 'setWordlist') {

@@ -158,3 +158,303 @@ footer { text-align: center; color: var(--text-dim); font-size: 11px; margin-top
   #pwaHint { display: none !important; }
   /* Le panneau .pwa-panel reste visible pour Purger cache / Simulation / Importer */
 }
+
+/* ============================================================ */
+/*  MATRICE 16×16                                                */
+/* ============================================================ */
+.bit-matrix {
+  display: grid;
+  grid-template-columns: repeat(16, 1fr);
+  gap: 2px;
+  background: var(--border);
+  padding: 3px;
+  border-radius: 8px;
+  max-width: 480px;
+  margin: 0 auto 16px;
+  aspect-ratio: 1 / 1;
+}
+
+.bit-matrix .bit {
+  aspect-ratio: 1 / 1;
+  background: var(--bg);
+  border-radius: 2px;
+  transition: background 0.1s, transform 0.1s;
+  cursor: pointer;
+  touch-action: manipulation;
+  user-select: none;
+}
+
+.bit-matrix .bit:hover {
+  transform: scale(1.08);
+}
+
+.bit-matrix .bit.on {
+  background: linear-gradient(180deg, #ffea66 0%, #ffd600 100%);
+  box-shadow: inset 0 2px 6px rgba(255, 214, 0, 0.25);
+}
+
+.matrix-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: center;
+  margin-bottom: 12px;
+}
+
+.matrix-controls button {
+  padding: 8px 12px;
+  font-size: 12px;
+}
+
+.btn-arrow {
+  min-width: 44px;
+  font-size: 16px;
+  padding: 8px;
+}
+
+.hint.warning {
+  color: var(--warning);
+  background: rgba(210, 153, 34, 0.08);
+  padding: 8px 10px;
+  border-radius: 6px;
+  border-left: 3px solid var(--warning);
+}
+
+/* ============================================================ */
+/*  CLÉ PRIVÉE / WIF                                             */
+/* ============================================================ */
+.field-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  background: var(--bg);
+  border-radius: 6px;
+  margin-bottom: 8px;
+  font-family: 'SF Mono', Consolas, monospace;
+  font-size: 12px;
+}
+
+.field-label {
+  color: var(--text-dim);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  flex-shrink: 0;
+  min-width: 50px;
+}
+
+.field-value {
+  flex: 1;
+  color: var(--accent);
+  word-break: break-all;
+  font-size: 12px;
+}
+
+.field-value.masked {
+  filter: blur(4px);
+  user-select: none;
+  cursor: pointer;
+}
+
+.field-value.masked.revealed {
+  filter: none;
+}
+
+.btn-tiny {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 8px;
+  font-size: 12px;
+  cursor: pointer;
+  color: var(--text);
+}
+
+.btn-tiny:hover {
+  border-color: var(--accent);
+}
+
+/* ============================================================ */
+/*  ADRESSES + BALANCES                                          */
+/* ============================================================ */
+.address-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.address-row {
+  display: grid;
+  grid-template-columns: 140px 1fr 100px;
+  gap: 10px;
+  align-items: center;
+  padding: 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 12px;
+  transition: border-color 0.2s;
+}
+
+.address-row.funded {
+  border-color: var(--success);
+  background: rgba(63, 185, 80, 0.05);
+}
+
+.address-row.error {
+  border-color: var(--danger);
+  background: rgba(248, 81, 73, 0.05);
+}
+
+.address-label {
+  color: var(--text-dim);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+.address-value {
+  font-family: 'SF Mono', Consolas, monospace;
+  color: var(--accent);
+  word-break: break-all;
+  cursor: pointer;
+  user-select: all;
+}
+
+.address-value:active {
+  color: var(--success);
+}
+
+.address-balance {
+  text-align: right;
+  font-family: 'SF Mono', Consolas, monospace;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.address-row.funded .address-balance {
+  color: var(--success);
+  font-weight: 700;
+}
+
+.address-row.error .address-balance {
+  color: var(--danger);
+}
+
+/* ============================================================ */
+/*  QR CODE                                                      */
+/* ============================================================ */
+.qr-section {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 16px;
+  align-items: start;
+}
+
+@media (max-width: 600px) {
+  .qr-section {
+    grid-template-columns: 1fr;
+  }
+}
+
+.qr-canvas {
+  width: 256px;
+  height: 256px;
+  background: #ffffff;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  image-rendering: pixelated;
+}
+
+.qr-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.qr-input {
+  padding: 8px 10px;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-family: 'SF Mono', monospace;
+  font-size: 12px;
+}
+
+.camera-preview {
+  width: 100%;
+  max-width: 320px;
+  border-radius: 8px;
+  background: #000;
+  border: 1px solid var(--border);
+}
+
+/* ============================================================ */
+/*  TOGGLE / SWITCH                                              */
+/* ============================================================ */
+.switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+  user-select: none;
+}
+
+.switch:hover {
+  border-color: var(--accent);
+}
+
+.switch input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+/* ============================================================ */
+/*  BOUTON ALÉATOIRE SÛR                                         */
+/* ============================================================ */
+#matrixRand {
+  background: linear-gradient(180deg, #1f6feb, #1560c4);
+  border-color: #1f6feb;
+  color: #fff;
+}
+
+#matrixRand:hover {
+  background: linear-gradient(180deg, #388bfd, #1f6feb);
+}
+
+/* ============================================================ */
+/*  RESPONSIVE MATRICE                                           */
+/* ============================================================ */
+@media (max-width: 520px) {
+  .bit-matrix {
+    max-width: 100%;
+  }
+
+  .address-row {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+
+  .address-balance {
+    text-align: left;
+  }
+
+  .field-row {
+    flex-wrap: wrap;
+  }
+
+  .qr-canvas {
+    width: 100%;
+    height: auto;
+    aspect-ratio: 1 / 1;
+  }
+}

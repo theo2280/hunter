@@ -4,36 +4,43 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <meta name="theme-color" content="#0d1117">
-  <meta name="description" content="Récupération guidée de wallet Bitcoin BIP39/BIP32/BIP44, 100% offline.">
+  <meta name="description" content="Hunter Pro — BIP39/BIP32/BIP44 + Matrice + QR + Balance">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <meta name="apple-mobile-web-app-title" content="Hunter">
+  <meta name="apple-mobile-web-app-title" content="Hunter Pro">
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="apple-touch-icon" href="icons/icon-192.png">
-  <title>Hunter — Récupération BIP39</title>
+  <title>Hunter Pro — BIP39 + Matrice + QR</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <div class="container">
     <header>
-      <h1>🔍 Hunter</h1>
-      <p class="subtitle">Récupération guidée de wallet BIP39/BIP32/BIP44</p>
+      <h1>🔍 Hunter Pro</h1>
+      <p class="subtitle">BIP39/BIP32/BIP44 · Matrice · QR · Balance</p>
       <p class="legal">⚠️ Usage strictement réservé aux wallets que vous possédez ou êtes autorisé à auditer.</p>
     </header>
 
+    <!-- ============================================== -->
+    <!--  ONGLETS DE MODE                                 -->
+    <!-- ============================================== -->
     <div class="panel mode-panel">
       <div class="mode-tabs">
-        <button class="mode-tab active" data-mode="guided">🎯 Mode Guidé (récupération)</button>
-        <button class="mode-tab" data-mode="random">🎲 Mode Aléatoire (audit)</button>
+        <button class="mode-tab active" data-mode="guided">🎯 Guidé</button>
+        <button class="mode-tab" data-mode="random">🎲 Aléatoire</button>
+        <button class="mode-tab" data-mode="matrix">🎨 Matrice</button>
       </div>
     </div>
 
+    <!-- ============================================== -->
+    <!--  PANNEAU MODE GUIDÉ                              -->
+    <!-- ============================================== -->
     <div id="guidedPanel">
       <div class="panel">
         <h2>📝 Phrase mnémonique partielle</h2>
         <p class="hint">
-          Mots connus + <code>?</code> pour les inconnus. Les <strong>préfixes</strong> sont acceptés
+          Mots connus + <code>?</code> pour les inconnus. Les préfixes sont acceptés
           (ex: <code>aban</code> → tous les mots commençant par "aban").<br>
           Exemple : <code>abandon ? ability ? able about above absent absorb abstract absurd abuse</code>
         </p>
@@ -81,6 +88,9 @@ m/84'/0'/0'/0/0</textarea>
       </div>
     </div>
 
+    <!-- ============================================== -->
+    <!--  PANNEAU MODE ALÉATOIRE                          -->
+    <!-- ============================================== -->
     <div id="randomPanel" style="display:none;">
       <div class="panel">
         <h2>🎲 Génération aléatoire</h2>
@@ -103,6 +113,114 @@ m/84'/0'/0'/0/0</textarea>
       </div>
     </div>
 
+    <!-- ============================================== -->
+    <!--  PANNEAU MODE MATRICE (nouveau !)                -->
+    <!-- ============================================== -->
+    <div id="matrixPanel" style="display:none;">
+      <div class="panel">
+        <h2>🎨 Matrice de bits (16×16 = 256 bits)</h2>
+        <p class="hint">
+          Cliquez sur un bit pour le basculer. Utilisez les flèches pour faire tourner
+          les lignes/colonnes. Pulse = mutation aléatoire cryptographiquement sûre.
+        </p>
+
+        <div id="bitMatrix" class="bit-matrix"></div>
+
+        <div class="matrix-controls">
+          <button id="matrixClr" class="btn-secondary">🧹 Effacer</button>
+          <button id="matrixRand" class="btn-secondary">🎲 Aléatoire sûr</button>
+          <button id="matrixPulse" class="btn-secondary">💓 Pulse</button>
+          <button id="matrixUp" class="btn-arrow" title="Rotation lignes ↑">⬆️</button>
+          <button id="matrixDown" class="btn-arrow" title="Rotation lignes ↓">⬇️</button>
+          <button id="matrixLeft" class="btn-arrow" title="Rotation lignes ←">⬅️</button>
+          <button id="matrixRight" class="btn-arrow" title="Rotation lignes →">➡️</button>
+        </div>
+
+        <p class="hint warning" id="matrixWarning" style="display:none;">
+          ⚠️ Pulse utilise <code>crypto.getRandomValues</code> mais ne remplace PAS
+          un CSPRNG. Utilisez <strong>🎲 Aléatoire sûr</strong> pour une vraie clé.
+        </p>
+
+        <p class="hint" id="matrixValidity">
+          Clé privée valide : <span id="matrixValidIcon">⏳</span>
+        </p>
+      </div>
+
+      <!-- Clé privée en cours -->
+      <div class="panel">
+        <h2>🔑 Clé privée (matrice)</h2>
+        <div class="field-row">
+          <span class="field-label">HEX :</span>
+          <code id="matrixHex" class="field-value">—</code>
+        </div>
+        <div class="field-row">
+          <span class="field-label">WIF :</span>
+          <code id="matrixWif" class="field-value masked">—</code>
+          <button id="matrixWifToggle" class="btn-tiny">👁️</button>
+        </div>
+      </div>
+
+      <!-- 4 adresses dérivées -->
+      <div class="panel">
+        <h2>📬 4 adresses dérivées</h2>
+        <div class="address-list">
+          <div class="address-row" id="matrixRowP2PKHc">
+            <span class="address-label">P2PKH (compressée)</span>
+            <code class="address-value" id="matrixAddrP2PKHc">—</code>
+            <span class="address-balance" id="matrixBalP2PKHc">—</span>
+          </div>
+          <div class="address-row" id="matrixRowP2PKHu">
+            <span class="address-label">P2PKH (non-comp.)</span>
+            <code class="address-value" id="matrixAddrP2PKHu">—</code>
+            <span class="address-balance" id="matrixBalP2PKHu">—</span>
+          </div>
+          <div class="address-row" id="matrixRowP2SH">
+            <span class="address-label">P2SH-SegWit</span>
+            <code class="address-value" id="matrixAddrP2SH">—</code>
+            <span class="address-balance" id="matrixBalP2SH">—</span>
+          </div>
+          <div class="address-row" id="matrixRowBech32">
+            <span class="address-label">Bech32</span>
+            <code class="address-value" id="matrixAddrBech32">—</code>
+            <span class="address-balance" id="matrixBalBech32">—</span>
+          </div>
+        </div>
+
+        <div class="controls" style="margin-top:12px;">
+          <label class="switch">
+            <input type="checkbox" id="offlineToggle" checked>
+            <span>🔒 Offline mode</span>
+          </label>
+          <select id="apiSelect">
+            <option value="mempool">mempool.space</option>
+            <option value="blockchair">blockchair.com</option>
+          </select>
+          <button id="btnCheckBalances" class="btn-secondary">💰 Vérifier soldes</button>
+        </div>
+      </div>
+
+      <!-- QR code -->
+      <div class="panel">
+        <h2>📱 QR Code (adresse ou WIF)</h2>
+        <div class="qr-section">
+          <canvas id="qrCanvas" width="256" height="256" class="qr-canvas"></canvas>
+          <div class="qr-controls">
+            <input id="qrText" placeholder="adresse ou WIF" class="qr-input">
+            <button id="qrGenBtn" class="btn-secondary">🎨 Générer QR</button>
+            <button id="qrScanBtn" class="btn-secondary">📷 Scan caméra</button>
+            <input type="file" id="qrFile" accept="image/*" style="display:none">
+            <button id="qrFileBtn" class="btn-secondary">📁 Charger image</button>
+            <video id="camPreview" autoplay playsinline muted class="camera-preview" style="display:none;"></video>
+            <button id="qrStopBtn" class="btn-secondary" style="display:none;">⏹️ Arrêter caméra</button>
+          </div>
+        </div>
+        <p class="hint" id="qrResult">Aucun QR généré.</p>
+      </div>
+    </div>
+
+    <!-- ============================================== -->
+    <!--  STOCK D'ADRESSES CIBLES (partagé)               -->
+    <!-- ============================================== -->
     <div class="panel">
       <h2>📋 Stock d'adresses cibles</h2>
       <p class="hint">Une adresse par ligne. Types : Legacy, SegWit, Bech32, Testnet.</p>
@@ -112,6 +230,9 @@ m/84'/0'/0'/0/0</textarea>
       <p class="hint" id="targetsStatus">Aucune adresse chargée.</p>
     </div>
 
+    <!-- ============================================== -->
+    <!--  EXÉCUTION (partagé)                             -->
+    <!-- ============================================== -->
     <div class="panel">
       <h2>⚙️ Exécution</h2>
       <div class="grid-2" style="margin-bottom:16px;">
@@ -159,10 +280,13 @@ m/84'/0'/0'/0/0</textarea>
       <p class="status" id="statusText">Prêt. Configurez puis chargez des cibles.</p>
     </div>
 
+    <!-- ============================================== -->
+    <!--  APPLICATION (partagé)                           -->
+    <!-- ============================================== -->
     <div class="panel pwa-panel">
       <h2>📲 Application</h2>
       <div class="server-status">
-        <span id="serverStatus">⏳ Démarrage du serveur local...</span>
+        <span id="serverStatus">⏳ Initialisation...</span>
         <span id="installBtn" class="btn-install" hidden>📲 Installer</span>
       </div>
       <p class="hint" id="pwaHint">
@@ -176,6 +300,9 @@ m/84'/0'/0'/0/0</textarea>
       </div>
     </div>
 
+    <!-- ============================================== -->
+    <!--  RÉSULTATS                                       -->
+    <!-- ============================================== -->
     <div class="panel results-panel" id="resultsPanel" style="display:none;">
       <h2>🎯 Correspondances trouvées</h2>
       <div id="resultsList"></div>
