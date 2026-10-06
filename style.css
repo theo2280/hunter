@@ -152,6 +152,11 @@ footer { text-align: center; color: var(--text-dim); font-size: 11px; margin-top
   }
 }
 
-@media (display-mode: standalone) {
   .pwa-panel { display: none; }
+}
+@media (display-mode: standalone) {
+  /* En mode PWA installée : masquer seulement le bandeau "Installer" */
+  #installBtn { display: none !important; }
+  #pwaHint { display: none !important; }
+  /* Le panneau .pwa-panel reste visible pour Purger cache / Simulation / Importer */
 }
