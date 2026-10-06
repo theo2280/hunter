@@ -1,25 +1,10 @@
-// app.js — Orchestrateur Hunter : serveur PWA + crypto + IndexedDB + simulation + testnet
-import { getWordlist, preloadWordlists, preloadWordlistsWithRetry, WORDLIST_META } from './bip39-fr.js';
-import { LocalServer } from './server.js';
-import {
-  startSession, updateSession, endSession, getLastSession,
-  saveMatch, setConfig, getConfig, saveFormState, loadFormState
-} from './storage.js';
+// app.js — Hunter v8 : version simplifiée, non bloquante, robuste
+import { getWordlist, WORDLIST_META } from './bip39-fr.js';
 import { encryptExport, decryptExport, passwordStrength } from './crypto-export.js';
-async function requestPersistentStorage() {
-  if (!navigator.storage || !navigator.storage.persist) return false;
-  try {
-    const already = await navigator.storage.persisted();
-    if (already) { console.log('[Storage] Déjà persistant'); return true; }
-    const granted = await navigator.storage.persist();
-    console.log('[Storage] Persistance accordée :', granted);
-    return granted;
-  } catch (e) {
-    console.warn('[Storage] Échec persistance:', e);
-    return false;
-  }
-}
 
+// ============================================================
+//  ÉTAT
+// ============================================================
 const state = {
   workers: [],
   targets: new Set(),
@@ -29,120 +14,93 @@ const state = {
   currentMode: 'guided',
   reportInterval: null,
   exhaustedCount: 0,
-  server: null,
   sessionId: null
 };
 
+// ============================================================
+//  DOM HELPERS
+// ============================================================
 const $ = id => document.getElementById(id);
-const els = {
-  modeTabs: document.querySelectorAll('.mode-tab'),
-  guidedPanel: $('guidedPanel'),
-  randomPanel: $('randomPanel'),
-  mnemonicPattern: $('mnemonicPattern'),
-  phraseLength: $('phraseLength'),
-  wordlistLang: $('wordlistLang'),
-  wordlistStatus: $('wordlistStatus'),
-  passphraseList: $('passphraseList'),
-  pathList: $('pathList'),
-  indexRange: $('indexRange'),
-  randomLength: $('randomLength'),
-  randomLang: $('randomLang'),
-  targetsInput: $('targetsInput'),
-  loadTargetsBtn: $('loadTargetsBtn'),
-  targetsStatus: $('targetsStatus'),
-  workerCount: $('workerCount'),
-  candidateLimit: $('candidateLimit'),
-  startBtn: $('startBtn'),
-  stopBtn: $('stopBtn'),
-  exportBtn: $('exportBtn'),
-  statCandidates: $('statCandidates'),
-  statAddresses: $('statAddresses'),
-  statMatches: $('statMatches'),
-  statRate: $('statRate'),
-  progressFill: $('progressFill'),
-  statusText: $('statusText'),
-  resultsPanel: $('resultsPanel'),
-  resultsList: $('resultsList'),
-  serverStatus: $('serverStatus'),
-  installBtn: $('installBtn'),
-  pwaHint: $('pwaHint'),
-  simulateBtn: $('simulateBtn'),
-  importBtn: $('importBtn'),
-  importFile: $('importFile'),
-  purgeCacheBtn: $('purgeCacheBtn')
-};
+const setStatus = (txt) => { const el = $('statusText'); if (el) el.textContent = txt; };
+const setServerStatus = (txt) => { const el = $('serverStatus'); if (el) el.textContent = txt; };
+const setWordlistStatus = (txt) => { const el = $('wordlistStatus'); if (el) el.textContent = txt; };
 
-function populateLanguageSelects() {
-  for (const [code, meta] of Object.entries(WORDLIST_META)) {
-    const opt1 = document.createElement('option');
-    opt1.value = code;
-    opt1.textContent = meta.flag + ' ' + meta.label;
-    els.wordlistLang.appendChild(opt1);
-    const opt2 = opt1.cloneNode(true);
-    els.randomLang.appendChild(opt2);
-  }
-  els.wordlistLang.value = 'en';
-  els.randomLang.value = 'en';
-}
-
-async function initWordlists() {
-  const langs = Object.keys(WORDLIST_META);
-  els.wordlistStatus.textContent = '⏳ Préchargement de ' + langs.length + ' wordlists...';
-
-  try {
-    const result = await preloadWordlistsWithRetry(langs, (progress) => {
-      if (progress.attempt === 'done') return;
-      els.wordlistStatus.textContent =
-        '⏳ Tentative ' + progress.attempt + '/3 — ' +
-        progress.loaded + '/' + progress.total + ' chargées...';
-    });
-
-    const ok = Object.keys(result.loaded).length;
-    const missing = result.missing;
-
-    if (missing.length === 0) {
-      els.wordlistStatus.textContent =
-        '✅ ' + ok + '/' + langs.length + ' wordlists chargées (' + (ok * 2048) + ' mots).';
-    } else {
-      const missingLabels = missing.map(l => WORDLIST_META[l].label).join(', ');
-      els.wordlistStatus.textContent =
-        '⚠️ ' + ok + '/' + langs.length + ' wordlists chargées. ' +
-        'Manquantes : ' + missingLabels + ' (à la demande).';
-      console.warn('[Wordlists] Non chargées après 3 tentatives :', missing);
+// ============================================================
+//  INITIALISATION UI — SYNCHRONE, IMMÉDIATE
+// ============================================================
+function initUI() {
+  // Peupler les sélecteurs de langue
+  const langSelects = [$('wordlistLang'), $('randomLang')];
+  for (const sel of langSelects) {
+    if (!sel) continue;
+    sel.innerHTML = '';
+    for (const [code, meta] of Object.entries(WORDLIST_META)) {
+      const opt = document.createElement('option');
+      opt.value = code;
+      opt.textContent = (meta.flag || '') + ' ' + meta.label;
+      sel.appendChild(opt);
     }
-  } catch (e) {
-    els.wordlistStatus.textContent = '⚠️ Erreur : ' + e.message;
+    sel.value = 'en';
+  }
+
+  // Statuts initiaux
+  setServerStatus('🌐 Prêt (mode local)');
+  setWordlistStatus('⏳ Chargement des wordlists...');
+  setStatus('Prêt. Chargez des cibles puis démarrez.');
+
+  // Vérifier le SW en arrière-plan (NE BLOQUE PAS)
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.getRegistration('./').then(reg => {
+      if (reg && reg.active) {
+        setServerStatus('🌐 Serveur local actif');
+      } else {
+        setServerStatus('🌐 Prêt (mode local)');
+      }
+    }).catch(() => {
+      setServerStatus('🌐 Prêt (mode local)');
+    });
+  } else {
+    setServerStatus('⚠️ SW non supporté');
   }
 }
-els.modeTabs.forEach(tab => {
-  tab.addEventListener('click', () => {
-    els.modeTabs.forEach(t => t.classList.remove('active'));
-    tab.classList.add('active');
-    state.currentMode = tab.dataset.mode;
-    els.guidedPanel.style.display = state.currentMode === 'guided' ? 'block' : 'none';
-    els.randomPanel.style.display = state.currentMode === 'random' ? 'block' : 'none';
+
+// ============================================================
+//  CHARGEMENT WORDLISTS — EN ARRIÈRE-PLAN, NON BLOQUANT
+// ============================================================
+async function loadWordlists() {
+  const langs = Object.keys(WORDLIST_META);
+  let loaded = 0;
+
+  // Charger en parallèle, sans bloquer sur échec
+  const promises = langs.map(async (lang) => {
+    try {
+      await getWordlist(lang);
+      loaded++;
+      setWordlistStatus('⏳ ' + loaded + '/' + langs.length + ' wordlists...');
+    } catch (e) {
+      // Ignore silencieusement
+    }
   });
-});
 
-els.loadTargetsBtn.addEventListener('click', () => {
-  const lines = els.targetsInput.value.split('\n');
-  const set = new Set();
-  for (const line of lines) {
-    const a = line.trim();
-    if (a && a.length > 20) set.add(a);
-  }
-  state.targets = set;
-  els.targetsStatus.textContent = set.size + ' adresse(s) cible(s) chargée(s).';
-  els.startBtn.disabled = set.size === 0;
-  for (const w of state.workers) {
-    w.postMessage({ type: 'setTargets', targets: [...set] });
-  }
-});
+  await Promise.allSettled(promises);
 
+  if (loaded === langs.length) {
+    setWordlistStatus('✅ ' + loaded + '/' + langs.length + ' wordlists chargées');
+  } else if (loaded > 0) {
+    setWordlistStatus('⚠️ ' + loaded + '/' + langs.length + ' wordlists (fallback possible)');
+  } else {
+    setWordlistStatus('⚠️ Wordlists indisponibles');
+  }
+}
+
+// ============================================================
+//  WORKERS
+// ============================================================
 function createWorkers(count) {
   for (const w of state.workers) w.terminate();
   state.workers = [];
   state.exhaustedCount = 0;
+
   for (let i = 0; i < count; i++) {
     const worker = new Worker('worker.js', { type: 'module' });
     worker.onmessage = (e) => handleWorkerMessage(e.data);
@@ -164,9 +122,7 @@ function handleWorkerMessage(msg) {
       stopAll('✅ Espace de recherche épuisé.');
     }
   } else if (msg.type === 'error') {
-    els.statusText.textContent = '⚠️ ' + msg.message;
-  } else if (msg.type === 'wordlistReady') {
-    els.statusText.textContent = 'Wordlist ' + msg.lang + ' prête (' + msg.size + ' mots).';
+    setStatus('⚠️ ' + msg.message);
   }
 }
 
@@ -175,50 +131,68 @@ async function onMatch(match) {
   state.matches.push(match);
   addResultToUI(match);
   updateUI();
-  els.exportBtn.disabled = false;
-  if (state.sessionId) {
-    try { await saveMatch(state.sessionId, match); } catch (e) { console.warn(e); }
-  }
+  const exportBtn = $('exportBtn');
+  if (exportBtn) exportBtn.disabled = false;
 }
 
-els.startBtn.addEventListener('click', async () => {
-  if (state.targets.size === 0) { alert('Chargez des adresses cibles.'); return; }
+// ============================================================
+//  DÉMARRAGE
+// ============================================================
+async function startHunt() {
+  if (state.targets.size === 0) {
+    alert('Chargez d\'abord des adresses cibles.');
+    return;
+  }
 
-  const paths = els.pathList.value.split('\n').map(l => l.trim()).filter(l => l.startsWith('m/'));
-  const passphrases = els.passphraseList.value.split('\n').map(p => p.trim()).filter(Boolean);
-  const candidateLimit = parseInt(els.candidateLimit.value) || 0;
-  const indexRange = parseInt(els.indexRange.value) || 10;
-  const lang = state.currentMode === 'guided' ? els.wordlistLang.value : els.randomLang.value;
+  const paths = ($('pathList')?.value || '').split('\n').map(l => l.trim()).filter(l => l.startsWith('m/'));
+  const passphrases = ($('passphraseList')?.value || '').split('\n').map(p => p.trim()).filter(Boolean);
+  const candidateLimit = parseInt($('candidateLimit')?.value) || 0;
+  const indexRange = parseInt($('indexRange')?.value) || 10;
+  const lang = state.currentMode === 'guided'
+    ? ($('wordlistLang')?.value || 'en')
+    : ($('randomLang')?.value || 'en');
 
   let config;
   if (state.currentMode === 'guided') {
-    const pattern = els.mnemonicPattern.value.trim();
+    const pattern = ($('mnemonicPattern')?.value || '').trim();
     if (!pattern) { alert('Saisissez un pattern.'); return; }
-    config = { mode: 'guided', pattern, phraseLength: parseInt(els.phraseLength.value), lang, passphrases, paths: paths.length > 0 ? paths : ["m/44'/0'/0'/0/0"], indexRange, candidateLimit };
+    config = {
+      mode: 'guided', pattern,
+      phraseLength: parseInt($('phraseLength')?.value) || 24,
+      lang, passphrases,
+      paths: paths.length > 0 ? paths : ["m/44'/0'/0'/0/0"],
+      indexRange, candidateLimit
+    };
   } else {
-    config = { mode: 'random', phraseLength: parseInt(els.randomLength.value), lang, passphrases, paths: paths.length > 0 ? paths : ["m/44'/0'/0'/0/0"], indexRange, candidateLimit };
+    config = {
+      mode: 'random',
+      phraseLength: parseInt($('randomLength')?.value) || 24,
+      lang, passphrases,
+      paths: paths.length > 0 ? paths : ["m/44'/0'/0'/0/0"],
+      indexRange, candidateLimit
+    };
   }
 
   let wordlist;
-  try { wordlist = await getWordlist(lang); }
-  catch (e) { alert('Wordlist ' + lang + ' indisponible : ' + e.message); return; }
-
   try {
-    const session = await startSession(config);
-    state.sessionId = session.id;
-  } catch (e) { console.warn('IndexedDB indisponible :', e); }
+    wordlist = await getWordlist(lang);
+  } catch (e) {
+    alert('Wordlist ' + lang + ' indisponible : ' + e.message);
+    return;
+  }
 
-  createWorkers(parseInt(els.workerCount.value));
+  const workerCount = parseInt($('workerCount')?.value) || 2;
+  createWorkers(workerCount);
   state.isRunning = true;
   state.stats = { candidates: 0, addresses: 0, matches: 0, startTime: Date.now() };
   state.matches = [];
 
-  els.resultsList.innerHTML = '';
-  els.resultsPanel.style.display = 'none';
-  els.exportBtn.disabled = true;
-  els.startBtn.disabled = true;
-  els.stopBtn.disabled = false;
-  els.statusText.textContent = 'Démarrage (' + state.workers.length + ' workers, ' + state.currentMode + ', ' + lang + ')...';
+  if ($('resultsList')) $('resultsList').innerHTML = '';
+  if ($('resultsPanel')) $('resultsPanel').style.display = 'none';
+  if ($('exportBtn')) $('exportBtn').disabled = true;
+  if ($('startBtn')) $('startBtn').disabled = true;
+  if ($('stopBtn')) $('stopBtn').disabled = false;
+  setStatus('Démarrage (' + workerCount + ' workers, ' + state.currentMode + ', ' + lang + ')...');
 
   const targetsArray = [...state.targets];
   for (const worker of state.workers) {
@@ -227,54 +201,51 @@ els.startBtn.addEventListener('click', async () => {
     worker.postMessage({ type: 'start', config });
   }
 
-  state.reportInterval = setInterval(async () => {
-    updateUI();
-    if (state.sessionId) {
-      try { await updateSession(state.sessionId, { stats: state.stats }); } catch (e) {}
-    }
-  }, 1000);
-});
-
-els.stopBtn.addEventListener('click', () => stopAll('⏹️ Arrêté.'));
+  if (state.reportInterval) clearInterval(state.reportInterval);
+  state.reportInterval = setInterval(updateUI, 1000);
+}
 
 function stopAll(reason) {
   state.isRunning = false;
   for (const w of state.workers) w.postMessage({ type: 'stop' });
-  els.startBtn.disabled = false;
-  els.stopBtn.disabled = true;
-  clearInterval(state.reportInterval);
-  if (state.sessionId) endSession(state.sessionId, 'stopped').catch(() => {});
-  els.statusText.textContent = reason || 'Arrêté.';
+  if ($('startBtn')) $('startBtn').disabled = false;
+  if ($('stopBtn')) $('stopBtn').disabled = true;
+  if (state.reportInterval) clearInterval(state.reportInterval);
+  setStatus(reason || 'Arrêté.');
   updateUI();
 }
 
 function updateUI() {
-  els.statCandidates.textContent = state.stats.candidates.toLocaleString();
-  els.statAddresses.textContent = state.stats.addresses.toLocaleString();
-  els.statMatches.textContent = state.stats.matches;
+  const c = $('statCandidates'); if (c) c.textContent = state.stats.candidates.toLocaleString();
+  const a = $('statAddresses'); if (a) a.textContent = state.stats.addresses.toLocaleString();
+  const m = $('statMatches'); if (m) m.textContent = state.stats.matches;
 
   const elapsed = (Date.now() - state.stats.startTime) / 1000;
   const rate = elapsed > 0 ? Math.round(state.stats.addresses / elapsed) : 0;
-  els.statRate.textContent = rate.toLocaleString();
+  const r = $('statRate'); if (r) r.textContent = rate.toLocaleString();
 
-  const limit = parseInt(els.candidateLimit.value) || 0;
-  if (limit > 0) {
-    const pct = Math.min(100, (state.stats.candidates / limit) * 100);
-    els.progressFill.style.width = pct + '%';
-  } else {
-    els.progressFill.style.width = (state.isRunning ? 50 : 0) + '%';
+  const limit = parseInt($('candidateLimit')?.value) || 0;
+  const fill = $('progressFill');
+  if (fill) {
+    if (limit > 0) {
+      fill.style.width = Math.min(100, (state.stats.candidates / limit) * 100) + '%';
+    } else {
+      fill.style.width = (state.isRunning ? 50 : 0) + '%';
+    }
   }
 
   if (state.isRunning) {
-    els.statusText.textContent =
-      'En cours · ' + state.stats.candidates.toLocaleString() + ' candidats · ' +
+    setStatus('En cours · ' + state.stats.candidates.toLocaleString() + ' candidats · ' +
       state.stats.addresses.toLocaleString() + ' adresses · ' +
-      state.stats.matches + ' trouvée(s) · ~' + rate + '/s';
+      state.stats.matches + ' trouvée(s) · ~' + rate + '/s');
   }
 }
 
 function addResultToUI(m) {
-  els.resultsPanel.style.display = 'block';
+  const panel = $('resultsPanel');
+  const list = $('resultsList');
+  if (!panel || !list) return;
+  panel.style.display = 'block';
   const div = document.createElement('div');
   div.className = 'result-item';
   div.innerHTML =
@@ -282,28 +253,45 @@ function addResultToUI(m) {
     '<div class="value">' + m.address + '</div>' +
     '<div class="label">Chemin</div>' +
     '<div class="value">' + m.path + '</div>' +
-    '<div class="label">Langue</div>' +
-    '<div class="value">' + m.lang + '</div>' +
     '<div class="label">Mnémonique</div>' +
     '<div class="mnemonic">' + m.mnemonic + '</div>' +
     (m.passphrase ? '<div class="label">Passphrase</div><div class="value">' + m.passphrase + '</div>' : '') +
-    '<div class="label">Clé privée (hex)</div>' +
-    '<div class="value">' + m.privateKey + '</div>' +
-    '<div class="label">Pubkey</div>' +
-    '<div class="value">' + m.pubkey + '</div>' +
-    '<div class="label">Trouvé le</div>' +
-    '<div class="value">' + m.timestamp + '</div>';
-  els.resultsList.appendChild(div);
+    '<div class="label">Clé privée</div>' +
+    '<div class="value">' + m.privateKey + '</div>';
+  list.appendChild(div);
 }
 
-els.exportBtn.addEventListener('click', async () => {
+// ============================================================
+//  CHARGEUR DE CIBLES
+// ============================================================
+function loadTargets() {
+  const input = $('targetsInput');
+  if (!input) return;
+  const lines = input.value.split('\n');
+  const set = new Set();
+  for (const line of lines) {
+    const a = line.trim();
+    if (a && a.length > 20) set.add(a);
+  }
+  state.targets = set;
+  const status = $('targetsStatus');
+  if (status) status.textContent = set.size + ' adresse(s) chargée(s).';
+  const startBtn = $('startBtn');
+  if (startBtn) startBtn.disabled = set.size === 0;
+  for (const w of state.workers) {
+    w.postMessage({ type: 'setTargets', targets: [...set] });
+  }
+}
+
+// ============================================================
+//  EXPORT CHIFFRÉ
+// ============================================================
+async function exportData() {
   if (state.matches.length === 0) return;
-  const password = prompt('Mot de passe pour chiffrer l\'export (Argon2id + AES-256-GCM).\nVide = export en clair.');
+  const password = prompt('Mot de passe pour chiffrer (vide = clair) :');
   const data = {
     version: '1.0',
     exportedAt: new Date().toISOString(),
-    sessionId: state.sessionId,
-    mode: state.currentMode,
     stats: state.stats,
     matches: state.matches
   };
@@ -312,172 +300,120 @@ els.exportBtn.addEventListener('click', async () => {
     if (passwordStrength(password) < 3) {
       if (!confirm('Mot de passe faible. Continuer ?')) return;
     }
-    els.statusText.textContent = '🔐 Chiffrement Argon2id en cours (~1-2 sec)...';
+    setStatus('🔐 Chiffrement en cours...');
     blob = await encryptExport(data, password);
     ext = 'hunter.enc.json';
   } else {
     blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
     ext = 'hunter.json';
   }
-  downloadBlob(blob, 'hunter-' + Date.now() + '.' + ext);
-  els.statusText.textContent = '✅ Export terminé.';
-});
-
-els.importBtn.addEventListener('click', () => els.importFile.click());
-els.importFile.addEventListener('change', async (e) => {
-  const file = e.target.files[0];
-  if (!file) return;
-  const pwd = prompt('Mot de passe de déchiffrement :');
-  if (!pwd) return;
-  try {
-    const data = await decryptExport(file, pwd);
-    state.matches = data.matches || [];
-    els.resultsList.innerHTML = '';
-    state.matches.forEach(addResultToUI);
-    els.resultsPanel.style.display = 'block';
-    els.exportBtn.disabled = state.matches.length === 0;
-    els.statusText.textContent = '✅ ' + state.matches.length + ' match(s) importé(s).';
-  } catch (e) { alert('Échec : ' + e.message); }
-});
-
-els.simulateBtn.addEventListener('click', async () => {
-  els.statusText.textContent = '🧪 Simulation en cours...';
-  const wl = await getWordlist('en');
-  const worker = new Worker('worker.js', { type: 'module' });
-  worker.onmessage = (e) => {
-    if (e.data.type === 'simulationResult') {
-      const results = e.data.results;
-      const ok = results.filter(r => r.ok).length;
-      const ko = results.length - ok;
-      console.table(results);
-      els.statusText.textContent = '🧪 Simulation : ' + ok + '/' + results.length + ' OK' + (ko ? ' — ' + ko + ' échec(s)' : '');
-      worker.terminate();
-    }
-  };
-  worker.postMessage({ type: 'setWordlist', lang: 'en', wordlist: wl });
-  const mod = await import('./simulation.js');
-  worker.postMessage({ type: 'runSimulation', payload: mod.TEST_VECTORS });
-});
-
-function downloadBlob(blob, filename) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
-  a.href = url; a.download = filename; a.click();
+  a.href = url;
+  a.download = 'hunter-' + Date.now() + '.' + ext;
+  a.click();
   URL.revokeObjectURL(url);
+  setStatus('✅ Export terminé.');
 }
 
-let saveTimer = null;
-function scheduleFormSave() {
-  clearTimeout(saveTimer);
-  saveTimer = setTimeout(async () => {
-    try { await saveFormState(collectForm()); } catch (e) {}
-  }, 500);
-}
-
-function collectForm() {
-  return {
-    mode: state.currentMode,
-    pattern: els.mnemonicPattern.value,
-    phraseLength: els.phraseLength.value,
-    lang: els.wordlistLang.value,
-    passphrases: els.passphraseList.value,
-    paths: els.pathList.value,
-    targets: els.targetsInput.value
-  };
-}
-
-['mnemonicPattern','phraseLength','wordlistLang','passphraseList','pathList','targetsInput']
-  .forEach(id => { const el = $(id); if (el) el.addEventListener('input', scheduleFormSave); });
-
-async function bootServer() {
-  state.server = new LocalServer();
-  state.server.on((evt) => {
-    if (evt.type === 'server-ready') els.serverStatus.textContent = '🌐 Serveur local actif';
-    else if (evt.type === 'server-error') els.serverStatus.textContent = '⚠️ ' + evt.error;
-    else if (evt.type === 'network') els.serverStatus.textContent = evt.online ? '🌐 En ligne' : '📴 Hors ligne';
-    else if (evt.type === 'install-available') {
-      els.installBtn.hidden = false;
-      els.pwaHint.textContent = '✅ Installation disponible — cliquez sur « Installer ».';
-    } else if (evt.type === 'installed') {
-      els.installBtn.hidden = true;
-      els.pwaHint.textContent = '✅ Application installée.';
-    }
-  });
-  await state.server.start();
-}
-
-els.installBtn.addEventListener('click', async () => {
-  if (state.server) await state.server.promptInstall();
-});
-
-els.purgeCacheBtn.addEventListener('click', async () => {
-  if (!confirm('Purger le cache ? Les wordlists seront re-téléchargées.')) return;
-  if (!state.server) return;
-  const r = await state.server.purge();
-  els.serverStatus.textContent = '🗑️ Cache purgé (' + (r && r.purged ? r.purged : 0) + ' entrées).';
-});
-
-async function tryResumeSession() {
+// ============================================================
+//  SIMULATION
+// ============================================================
+async function runSimulation() {
+  setStatus('🧪 Simulation en cours...');
   try {
-    // 1. Restaurer le formulaire TOUJOURS
-    const form = await loadFormState();
-    if (form) {
-      if (form.mode) {
-        state.currentMode = form.mode;
-        els.modeTabs.forEach(t => t.classList.toggle('active', t.dataset.mode === form.mode));
-        els.guidedPanel.style.display = form.mode === 'guided' ? 'block' : 'none';
-        els.randomPanel.style.display = form.mode === 'random' ? 'block' : 'none';
+    const wl = await getWordlist('en');
+    const worker = new Worker('worker.js', { type: 'module' });
+    worker.onmessage = (e) => {
+      if (e.data.type === 'simulationResult') {
+        const results = e.data.results;
+        const ok = results.filter(r => r.ok).length;
+        console.table(results);
+        setStatus('🧪 Simulation : ' + ok + '/' + results.length + ' OK');
+        worker.terminate();
       }
-      if (form.pattern) els.mnemonicPattern.value = form.pattern;
-      if (form.phraseLength) els.phraseLength.value = form.phraseLength;
-      if (form.passphrases) els.passphraseList.value = form.passphrases;
-      if (form.paths) els.pathList.value = form.paths;
-      if (form.targets) els.targetsInput.value = form.targets;
-    }
-
-    // 2. Reprendre une session interrompue si elle existe
-    const last = await getLastSession();
-    if (last && last.status === 'running') {
-      state.sessionId = last.id;
-      state.stats = Object.assign({}, last.stats, { startTime: Date.now() });
-      els.statusText.textContent = '⏪ Session restaurée (' +
-        last.stats.candidates.toLocaleString() + ' candidats).';
-    } else if (form) {
-      els.statusText.textContent = '✅ Formulaire restauré. Prêt à démarrer.';
-    }
+    };
+    worker.postMessage({ type: 'setWordlist', lang: 'en', wordlist: wl });
+    const mod = await import('./simulation.js');
+    worker.postMessage({ type: 'runSimulation', payload: mod.TEST_VECTORS });
   } catch (e) {
-    console.warn('[Resume] Erreur:', e);
+    setStatus('⚠️ Simulation échouée : ' + e.message);
   }
 }
-  populateLanguageSelects();
-  await bootServer();
-  await initWordlists();
-  await tryResumeSession();
-  scheduleFormSave();
-})();(async function boot() {
-  console.log('[Boot] Démarrage');
-  populateLanguageSelects();
-  els.serverStatus.textContent = '⏳ Initialisation...';
-  els.statusText.textContent = 'Prêt.';
 
-  // 1. Formulaire en premier (local, rapide)
-  tryResumeSession().catch(e => console.warn('[Boot] resume:', e));
-  scheduleFormSave();
+// ============================================================
+//  MODE TABS
+// ============================================================
+function initModeTabs() {
+  const tabs = document.querySelectorAll('.mode-tab');
+  tabs.forEach(tab => {
+    tab.addEventListener('click', () => {
+      tabs.forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+      state.currentMode = tab.dataset.mode || 'guided';
+      const guided = $('guidedPanel');
+      const random = $('randomPanel');
+      if (guided) guided.style.display = state.currentMode === 'guided' ? 'block' : 'none';
+      if (random) random.style.display = state.currentMode === 'random' ? 'block' : 'none';
+    });
+  });
+}
 
-  // 2. Wordlists avec timeout dur de 12s
-  const wordlistPromise = initWordlists();
-  Promise.race([
-    wordlistPromise,
-    new Promise(r => setTimeout(() => {
-      console.warn('[Boot] Wordlists timeout');
-      els.wordlistStatus.textContent = '⚠️ Wordlists indisponibles';
-      r();
-    }, 12000))
-  ]).catch(e => console.warn('[Boot] wl:', e));
+// ============================================================
+//  BINDING DES BOUTONS
+// ============================================================
+function bindEvents() {
+  const safeBind = (id, fn) => { const el = $(id); if (el) el.addEventListener('click', fn); };
+  safeBind('loadTargetsBtn', loadTargets);
+  safeBind('startBtn', startHunt);
+  safeBind('stopBtn', () => stopAll('⏹️ Arrêté.'));
+  safeBind('exportBtn', exportData);
+  safeBind('simulateBtn', runSimulation);
+  safeBind('purgeCacheBtn', async () => {
+    if (!confirm('Purger tous les caches ?')) return;
+    if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+      navigator.serviceWorker.controller.postMessage({ type: 'PURGE_CACHE' });
+    }
+    setStatus('🗑️ Purge demandée.');
+  });
+  safeBind('importBtn', () => { const f = $('importFile'); if (f) f.click(); });
 
-  // 3. Serveur SW — totalement non bloquant
-  bootServer().catch(e => console.warn('[Boot] server:', e));
+  const importFile = $('importFile');
+  if (importFile) {
+    importFile.addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const pwd = prompt('Mot de passe :');
+      if (!pwd) return;
+      try {
+        const data = await decryptExport(file, pwd);
+        state.matches = data.matches || [];
+        const list = $('resultsList');
+        const panel = $('resultsPanel');
+        if (list) list.innerHTML = '';
+        state.matches.forEach(addResultToUI);
+        if (panel) panel.style.display = 'block';
+        setStatus('✅ ' + state.matches.length + ' match(s) importé(s).');
+      } catch (e) {
+        alert('Erreur : ' + e.message);
+      }
+    });
+  }
+}
 
-  // 4. Persistance en background
-  requestPersistentStorage().catch(() => {});
+// ============================================================
+//  BOOT
+// ============================================================
+(function boot() {
+  console.log('[Hunter] Boot');
+
+  // 1. UI immédiat (synchrone)
+  initUI();
+  initModeTabs();
+  bindEvents();
+
+  // 2. Wordlists en arrière-plan (asynchrone, non bloquant)
+  loadWordlists().catch(e => console.warn('[Hunter] wordlists:', e));
+
+  console.log('[Hunter] Boot terminé — UI prête');
 })();
