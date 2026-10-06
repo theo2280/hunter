@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Hunter — Diagnostic SW</title>
+  <style>
+    body { background: #0d1117; color: #c9d1d9; font-family: monospace;
+           font-size: 13px; padding: 12px; line-height: 1.5; }
+    .ok { color: #3fb950; } .err { color: #f85149; }
+    .warn { color: #d29922; } .info { color: #58a6ff; }
+    h1 { color: #58a6ff; font-size: 16px; margin-bottom: 12px; }
+    pre { background: #161b22; padding: 10px; border-radius: 6px;
+          border: 1px solid #30363d; white-space: pre-wrap;
+          word-break: break-all; margin: 8px 0; font-size: 12px; }
+    button { background: #1f6feb; color: white; border: none;
+             padding: 10px 16px; border-radius: 6px;
+             font-size: 14px; margin: 8px 0; }
+  </style>
+</head>
+<body>
+  <h1>🔍 Hunter — Diagnostic Service Worker</h1>
+  <pre id="out">Chargement...</pre>
+  <button onclick="location.reload()">🔄 Recharger</button>
+  <script>
+    const out = document.getElementById('out');
+    let buf = '';
+    function log(msg, cls) {
+      const esc = msg.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+      buf += (cls ? '<span class="' + cls + '">' + esc + '</span>' : esc) + '\n';
+      out.innerHTML = buf;
+    }
+
+    (async function run() {
+      log('=== Diagnostic Hunter ===\n', 'info');
+      log('1. Protocol: ' + location.protocol,
+          location.protocol === 'https:' ? 'ok' : 'err');
+      log('2. Origin: ' + location.origin, 'info');
+
+      if (!('serviceWorker' in navigator)) {
+        log('3. Service Worker: NON SUPPORTÉ', 'err');
+        return;
+      }
+      log('3. Service Worker: supporté', 'ok');
+      log('4. isSecureContext: ' + window.isSecureContext,
+          window.isSecureContext ? 'ok' : 'err');
+      log('5. Controller: ' + (navigator.serviceWorker.controller ? 'OUI' : 'NON'),
+          navigator.serviceWorker.controller ? 'ok' : 'warn');
+
+      try {
+        const regs = await navigator.serviceWorker.getRegistrations();
+        log('6. Registrations: ' + regs.length,
+            regs.length > 0 ? 'ok' : 'warn');
+        regs.forEach((r, i) => log('   [' + i + '] ' + r.scope, 'info'));
+      } catch (e) {
+        log('6. Erreur: ' + e.message, 'err');
+      }
+
+      try {
+        const res = await fetch('./sw.js', { cache: 'no-store' });
+        log('7. Fetch sw.js: HTTP ' + res.status, res.ok ? 'ok' : 'err');
+        const text = await res.text();
+        log('   Taille: ' + text.length + ' octets', 'info');
+      } catch (e) {
+        log('7. Erreur fetch: ' + e.message, 'err');
+      }
+
+      try {
+        log('8. Enregistrement...', 'info');
+        const reg = await navigator.serviceWorker.register('./sw.js', { scope: './' });
+        log('   ✅ Enregistré: ' + reg.scope, 'ok');
+        const state = reg.active ? 'active' :
+                      reg.installing ? 'installing' :
+                      reg.waiting ? 'waiting' : 'unknown';
+        log('   State: ' + state, 'info');
+      } catch (e) {
+        log('8. ❌ ÉCHEC: ' + e.name + ' — ' + e.message, 'err');
+      }
+
+      try {
+        const keys = await caches.keys();
+        log('9. Caches: ' + (keys.length ? keys.join(', ') : '(aucun)'),
+            keys.length ? 'ok' : 'warn');
+      } catch (e) {
+        log('9. Erreur caches: ' + e.message, 'err');
+      }
+
+      log('\n=== Fin ===', 'info');
+    })();
+  </script>
+</body>
+</html>
