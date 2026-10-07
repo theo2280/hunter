@@ -1,5 +1,5 @@
 // sw.js — Service Worker : minimal, non bloquant, activation garantie
-const VERSION = 'hunter-v7';
+const VERSION = 'hunter-v8';
 const STATIC_CACHE = VERSION + '-static';
 const CDN_CACHE = VERSION + '-cdn';
 
@@ -12,16 +12,34 @@ const PRECACHE_ASSETS = [
 
 const CDN_HOSTS = ['esm.sh', 'raw.githubusercontent.com', 'cdn.jsdelivr.net', 'unpkg.com'];
 
+// Préchargement des libs CDN critiques (QR, crypto)
+const CDN_PRECACHE = [
+  'https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js',
+  'https://unpkg.com/qrcode-generator@1.4.4/qrcode.js',
+  'https://esm.sh/@noble/secp256k1@2.2.3'
+];
+
 // INSTALL — durée ~1s, ne fait AUCUN fetch réseau bloquant
 self.addEventListener('install', (event) => {
   event.waitUntil((async () => {
     try {
       const cache = await caches.open(STATIC_CACHE);
+      const cdnCache = await caches.open(CDN_CACHE);
+      
       // Précache local : chaque fetch est isolé, aucun ne peut bloquer
       await Promise.all(
         PRECACHE_ASSETS.map(asset =>
           fetch(asset).then(res => {
             if (res.ok) cache.put(asset, res);
+          }).catch(() => {})
+        )
+      );
+      
+      // Précache des libs CDN (qrcode-generator, secp256k1)
+      await Promise.all(
+        CDN_PRECACHE.map(url =>
+          fetch(url, { mode: 'cors' }).then(res => {
+            if (res.ok) cdnCache.put(url, res);
           }).catch(() => {})
         )
       );
