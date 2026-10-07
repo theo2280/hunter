@@ -1,5 +1,5 @@
 // sw.js — Service Worker : minimal, non bloquant, activation garantie
-const VERSION = 'hunter-v8';
+const VERSION = 'hunter-v9';
 const STATIC_CACHE = VERSION + '-static';
 const CDN_CACHE = VERSION + '-cdn';
 
@@ -7,6 +7,7 @@ const PRECACHE_ASSETS = [
   './', './index.html', './manifest.webmanifest', './style.css',
   './app.js', './worker.js', './bip39-fr.js', './server.js',
   './storage.js', './crypto-export.js', './simulation.js', './networks.js',
+  './matrix.js', './qr.js', './balance.js', './secp-direct.js', './qrcode-lib.js',
   './icons/icon-192.png', './icons/icon-512.png', './icons/icon-maskable-512.png'
 ];
 

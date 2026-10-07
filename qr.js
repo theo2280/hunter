@@ -12,30 +12,32 @@ let qrcodeLibPromise = null;
 async function loadQRCodeLib() {
   if (qrcodeLibPromise) return qrcodeLibPromise;
   qrcodeLibPromise = (async () => {
-    // Essayer le premier CDN
     try {
-      const res = await fetch('https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js');
+      const res = await fetch('./qrcode-lib.js');
       if (!res.ok) throw new Error('HTTP ' + res.status);
       const code = await res.text();
-      // Évaluer dans le contexte global
-      new Function(code)();
-      if (typeof window.qrcode === 'function') return window.qrcode;
-    } catch (e) {
-      console.warn('[QR] CDN1 échoué :', e.message);
-    }
 
-    // Fallback CDN
-    try {
-      const res = await fetch('https://unpkg.com/qrcode-generator@1.4.4/qrcode.js');
-      if (!res.ok) throw new Error('HTTP ' + res.status);
-      const code = await res.text();
-      new Function(code)();
-      if (typeof window.qrcode === 'function') return window.qrcode;
-    } catch (e) {
-      console.warn('[QR] CDN2 échoué :', e.message);
-    }
+      // Évaluer la lib dans le contexte global du worker/page
+      (new Function(code))();
 
-    throw new Error('Impossible de charger qrcode-generator');
+      // La lib expose soit window.qrcode soit globalThis.qrcode
+      if (typeof window !== 'undefined' && typeof window.qrcode === 'function') {
+        console.log('[QR] Lib locale chargée (window)');
+        return window.qrcode;
+      }
+      if (typeof globalThis !== 'undefined' && typeof globalThis.qrcode === 'function') {
+        console.log('[QR] Lib locale chargée (globalThis)');
+        return globalThis.qrcode;
+      }
+      if (typeof self !== 'undefined' && typeof self.qrcode === 'function') {
+        console.log('[QR] Lib locale chargée (self)');
+        return self.qrcode;
+      }
+      throw new Error('qrcode non défini après éval');
+    } catch (e) {
+      console.error('[QR] Échec chargement lib locale :', e.message);
+      throw new Error('Impossible de charger qrcode-lib.js : ' + e.message);
+    }
   })();
   return qrcodeLibPromise;
 }
