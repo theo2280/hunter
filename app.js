@@ -4,6 +4,7 @@ import { encryptExport, decryptExport, passwordStrength } from './crypto-export.
 import { BitMatrix } from './matrix.js';
 import { drawQR, QRScanner, decodeQRFromFile, detectQRPayloadType } from './qr.js';
 import { fetchBalanceWithFallback, fetchBalancesParallel, formatBTC, balanceState, clearBalanceCache } from './balance.js';
+import { deriveAddresses } from './secp-direct.js';
 
 // ============================================================
 //  ÉTAT
@@ -678,51 +679,18 @@ async function updateMatrixDisplays(privKeyBytes, valid) {
 }
 
 async function deriveAllAddressesFromMatrix(privKeyBytes) {
-  // Utilise un worker dédié pour ne pas bloquer l'UI
+  // Dérivation directe dans le main thread — pas de worker
   const hex = Array.from(privKeyBytes).map(b => b.toString(16).padStart(2, '0')).join('');
-  console.log('[Matrix] Derivation start pour hex:', hex);
+  console.log('[Matrix] Derivation directe pour hex:', hex);
 
-  return new Promise((resolve, reject) => {
-    const worker = new Worker('worker.js', { type: 'module' });
-    let done = false;
-
-    const finish = (fn, val) => {
-      if (done) return;
-      done = true;
-      clearTimeout(timeout);
-      try { worker.terminate(); } catch(e) {}
-      fn(val);
-    };
-
-    const timeout = setTimeout(() => {
-      console.warn('[Matrix] Timeout derivation worker');
-      finish(reject, new Error('Timeout dérivation (5s)'));
-    }, 5000);
-
-    worker.onmessage = (e) => {
-      const msg = e.data;
-      console.log('[Matrix] Worker message:', msg.type || msg);
-      if (msg.type === 'matrixDerived') {
-        finish(resolve, msg.payload);
-      } else if (msg.type === 'error') {
-        finish(reject, new Error(msg.message || 'Erreur worker'));
-      }
-      // Ignorer les autres messages (progress, wordlistReady, etc.)
-    };
-
-    worker.onerror = (err) => {
-      console.error('[Matrix] Worker error:', err);
-      finish(reject, new Error('Erreur worker: ' + (err.message || 'inconnue')));
-    };
-
-    // Envoyer la wordlist avant si possible (pour éviter un crash)
-    const wordlist = window._cachedWordlist;
-    if (wordlist) {
-      worker.postMessage({ type: 'setWordlist', lang: 'en', wordlist });
-    }
-
-    worker.postMessage({ type: 'deriveMatrixKey', privateKeyHex: hex });
-  });
+  try {
+    const result = await deriveAddresses(privKeyBytes);
+    console.log('[Matrix] Dérivation réussie');
+    return result;
+  } catch (e) {
+    console.error('[Matrix] Erreur dérivation:', e);
+    throw new Error('Dérivation échouée : ' + (e.message || 'inconnue'));
+  }
 }
 
 function handleScannedQR(value) {
