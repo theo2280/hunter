@@ -515,12 +515,31 @@ async function initMatrixModule() {
   const qrText = $('qrText');
   const qrResult = $('qrResult');
 
-  safeBind('qrGenBtn', async () => {
-    const text = (qrText?.value || '').trim() || $('matrixWif')?.textContent || $('matrixAddrP2PKHc')?.textContent;
-    if (!text || text === '—') { setStatus('Rien à encoder en QR.'); return; }
+    safeBind('qrGenBtn', async () => {
+    // Priorité : champ qrText > adresse P2PKH > Bech32 > WIF
+    let text = (qrText?.value || '').trim();
+    if (!text) {
+      const p2pkh = $('matrixAddrP2PKHc')?.textContent?.trim();
+      const bech32 = $('matrixAddrBech32')?.textContent?.trim();
+      const wif = $('matrixWif')?.textContent?.trim();
+      text = (p2pkh && p2pkh !== '—') ? p2pkh
+           : (bech32 && bech32 !== '—') ? bech32
+           : (wif && wif !== '—') ? wif
+           : '';
+    }
+    if (!text) {
+      if (qrResult) qrResult.textContent = '❌ Rien à encoder (champ vide + aucune adresse générée)';
+      return;
+    }
     if (qrResult) qrResult.textContent = 'Génération...';
-    const ok = await drawQR(qrCanvas, text, { size: 256, margin: 2, level: 'M' });
-    if (qrResult) qrResult.textContent = ok ? '✅ QR généré pour : ' + text.slice(0, 20) + '...' : '❌ Échec de génération';
+    try {
+      const ok = await drawQR(qrCanvas, text, { size: 256, margin: 2, level: 'M' });
+      if (qrResult) qrResult.textContent = ok
+        ? '✅ QR généré : ' + text.slice(0, 30) + (text.length > 30 ? '...' : '')
+        : '❌ Échec de génération';
+    } catch (e) {
+      if (qrResult) qrResult.textContent = '❌ Erreur : ' + e.message;
+    }
   });
 
   safeBind('qrScanBtn', async () => {

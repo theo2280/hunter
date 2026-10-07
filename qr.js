@@ -10,36 +10,18 @@ let qrcodeLibPromise = null;
  * MIT License — utilisée par Bitcoin Core, Electrum, Ledger.
  */
 async function loadQRCodeLib() {
-  if (qrcodeLibPromise) return qrcodeLibPromise;
-  qrcodeLibPromise = (async () => {
-    try {
-      const res = await fetch('./qrcode-lib.js');
-      if (!res.ok) throw new Error('HTTP ' + res.status);
-      const code = await res.text();
-
-      // Évaluer la lib dans le contexte global du worker/page
-      (new Function(code))();
-
-      // La lib expose soit window.qrcode soit globalThis.qrcode
-      if (typeof window !== 'undefined' && typeof window.qrcode === 'function') {
-        console.log('[QR] Lib locale chargée (window)');
-        return window.qrcode;
-      }
-      if (typeof globalThis !== 'undefined' && typeof globalThis.qrcode === 'function') {
-        console.log('[QR] Lib locale chargée (globalThis)');
-        return globalThis.qrcode;
-      }
-      if (typeof self !== 'undefined' && typeof self.qrcode === 'function') {
-        console.log('[QR] Lib locale chargée (self)');
-        return self.qrcode;
-      }
-      throw new Error('qrcode non défini après éval');
-    } catch (e) {
-      console.error('[QR] Échec chargement lib locale :', e.message);
-      throw new Error('Impossible de charger qrcode-lib.js : ' + e.message);
-    }
-  })();
-  return qrcodeLibPromise;
+  // La lib est chargée par <script src="qrcode-lib.js"> dans index.html
+  // Elle expose window.qrcode globalement
+  if (typeof window !== 'undefined' && typeof window.qrcode === 'function') {
+    return window.qrcode;
+  }
+  if (typeof globalThis !== 'undefined' && typeof globalThis.qrcode === 'function') {
+    return globalThis.qrcode;
+  }
+  if (typeof self !== 'undefined' && typeof self.qrcode === 'function') {
+    return self.qrcode;
+  }
+  throw new Error('qrcode non disponible — vérifier <script src="qrcode-lib.js">');
 }
 
 /**
